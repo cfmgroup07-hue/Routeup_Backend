@@ -14,10 +14,13 @@ const VisaPathway = require('./models/VisaPathway');
 const app = express();
 const server = http.createServer(app);
 
+// Define allowed origins
+const clientUrl = process.env.CLIENT_URL || '*';
+
 // Initialize Socket.io with CORS
 const io = socketIo(server, {
   cors: {
-    origin: '*', // Allow all origins for testing. In production, change to client URL.
+    origin: clientUrl,
     methods: ['GET', 'POST', 'PUT', 'DELETE']
   }
 });
@@ -137,7 +140,7 @@ const seedData = async () => {
 seedData();
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: clientUrl }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
