@@ -10,6 +10,11 @@ const Admin = require('./models/Admin');
 const Service = require('./models/Service');
 const VisaPathway = require('./models/VisaPathway');
 
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET is missing from environment variables. Admin auth will not work.');
+  process.exit(1);
+}
+
 // Initialize express & http server
 const app = express();
 const server = http.createServer(app);

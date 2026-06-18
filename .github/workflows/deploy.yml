@@ -34,7 +34,7 @@ jobs:
 
             npm install
 
-            pm2 restart routeup-backend || pm2 start server.js --name routeup-backend
+            pm2 restart routeup-backend || pm2 start npm --name routeup-backend -- start
 
             pm2 save
 
