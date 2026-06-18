@@ -261,9 +261,6 @@ router.post('/:id/schedule', protect, async (req, res) => {
     // Send email to candidate
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
-        <div style="background-color: #ffffff; padding: 20px; text-align: center; border-bottom: 3px solid #0d7c3d;">
-          <img src="cid:routeuplogo" alt="RouteUp Logo" style="max-height: 50px; width: auto;" />
-        </div>
         <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
           <h2 style="margin: 0; font-size: 22px;">Your Session is Scheduled!</h2>
         </div>
@@ -292,20 +289,10 @@ router.post('/:id/schedule', protect, async (req, res) => {
       </div>
     `;
 
-    const path = require('path');
-    
-    // Fire & forget or wait for email
     await sendEmail({
       to: booking.email,
       subject: 'RouteUp: Your Session is Scheduled',
       htmlContent: emailHtml,
-      attachments: [
-        {
-          filename: 'Routeup Logo.png',
-          path: path.join(__dirname, '../../../client/public/Routeup Logo.png'),
-          cid: 'routeuplogo' // same cid value as in the html img src
-        }
-      ]
     });
 
     notifyBookingUpdate(booking);
