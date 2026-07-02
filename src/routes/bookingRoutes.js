@@ -123,6 +123,50 @@ router.post('/', upload.single('cv'), async (req, res) => {
     // Notify admin socket of pending booking
     notifyNewBooking(booking);
 
+    const servicesList = servicesArray.length > 0
+      ? servicesArray.join(', ')
+      : 'Career Advisory Session';
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
+          <h2 style="margin: 0; font-size: 22px;">Your Appointment is Booked!</h2>
+        </div>
+        <div style="padding: 30px;">
+          <p style="font-size: 16px;">Hello <strong>${booking.name}</strong>,</p>
+          <p style="font-size: 16px; line-height: 1.5;">Thank you for booking with RouteUp. Your payment has been received and your appointment is confirmed.</p>
+
+          <div style="background-color: #f8fafc; border-left: 4px solid #0d7c3d; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 16px;"><strong>Services:</strong> ${servicesList}</p>
+            <p style="margin: 0 0 10px 0; font-size: 16px;"><strong>Amount Paid:</strong> Rs.${booking.amount}</p>
+            <p style="margin: 0; font-size: 16px;"><strong>Payment ID:</strong> ${booking.paymentId}</p>
+          </div>
+
+          <p style="font-size: 16px; line-height: 1.5;">Our team will contact you shortly with your meeting details. If you have any questions, reply to this email or reach us at hello@routeup.co.in.</p>
+
+          <p style="font-size: 16px; margin-top: 30px;">We look forward to helping you achieve your career goals!</p>
+
+          <p style="font-size: 16px; color: #666; margin-top: 30px;">
+            Best regards,<br/>
+            <strong>The RouteUp Team</strong>
+          </p>
+        </div>
+        <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
+          &copy; ${new Date().getFullYear()} RouteUp. All rights reserved.
+        </div>
+      </div>
+    `;
+
+    try {
+      await sendEmail({
+        to: booking.email,
+        subject: 'RouteUp: Your Appointment is Booked',
+        htmlContent: emailHtml,
+      });
+    } catch (emailError) {
+      console.error('Booking confirmation email failed:', emailError);
+    }
+
     res.status(201).json(booking);
   } catch (error) {
     console.error(error);
