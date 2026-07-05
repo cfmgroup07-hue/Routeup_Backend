@@ -86,7 +86,8 @@ const BookingSchema = new mongoose.Schema({
   },
   postMeetingDetails: {
     notes: { type: String, default: '' },
-    documentPath: { type: String, default: '' }
+    documentPath: { type: String, default: '' },
+    documentPaths: { type: [String], default: [] }
   }
 }, { timestamps: true });
 

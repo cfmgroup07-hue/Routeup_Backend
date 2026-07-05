@@ -95,42 +95,42 @@ const seedData = async () => {
       await VisaPathway.create([
         {
           countryName: 'UAE / Dubai',
-          countryFlag: '🇦🇪',
+          countryFlag: 'ae',
           visaTypes: ['Employment Visa', 'Green Visa'],
           description: 'Largest employer of Indian trade workers. Covers construction, oil & gas, hospitality, marine. Emigration clearance (ECR) required.',
           docBadgeText: 'Detailed visa document provided'
         },
         {
           countryName: 'Saudi Arabia',
-          countryFlag: '🇸🇦',
+          countryFlag: 'sa',
           visaTypes: ['Work Visa', 'Iqama'],
           description: 'High demand for welding, electrical, HVAC, and construction trades. Requires attestation of documents from MEA and Saudi embassy.',
           docBadgeText: 'Detailed visa document provided'
         },
         {
           countryName: 'Australia',
-          countryFlag: '🇦🇺',
+          countryFlag: 'au',
           visaTypes: ['Subclass 482', 'Subclass 189'],
           description: 'Points-based skilled migration. Trades like welding, plumbing, electrical, and HVAC are on the Skilled Occupation List. Skills assessment required.',
           docBadgeText: 'Detailed visa document provided'
         },
         {
           countryName: 'Canada',
-          countryFlag: '🇨🇦',
+          countryFlag: 'ca',
           visaTypes: ['Express Entry', 'PNP'],
           description: 'Federal Skilled Trades Program accepts welders, electricians, plumbers. CRS score-based system with provincial nomination pathways.',
           docBadgeText: 'Detailed visa document provided'
         },
         {
           countryName: 'Germany',
-          countryFlag: '🇩🇪',
+          countryFlag: 'de',
           visaTypes: ['Chancenkarte', 'Skilled Worker'],
           description: 'New Opportunity Card (Chancenkarte) allows trade workers to enter and job-search. German language (A2/B1) is an advantage.',
           docBadgeText: 'Detailed visa document provided'
         },
         {
           countryName: 'United Kingdom',
-          countryFlag: '🇬🇧',
+          countryFlag: 'gb',
           visaTypes: ['Skilled Worker'],
           description: 'Sponsor-based work visa system. Trades on the Shortage Occupation List get reduced salary thresholds. Requires English test (IELTS).',
           docBadgeText: 'Detailed visa document provided'

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const VisaPathway = require('../models/VisaPathway');
+const { resolveCountryFlag } = require('../utils/countryFlags');
 const { protect } = require('../middleware/authMiddleware');
 const { 
   notifyVisaPathwayCreated, 
@@ -14,7 +15,11 @@ const {
 router.get('/', async (req, res) => {
   try {
     const pathways = await VisaPathway.find({}).sort({ createdAt: 1 });
-    res.json(pathways);
+    const normalizedPathways = pathways.map((pathway) => ({
+      ...pathway.toObject(),
+      countryFlag: resolveCountryFlag(pathway.countryName, pathway.countryFlag)
+    }));
+    res.json(normalizedPathways);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -27,7 +32,7 @@ router.post('/', protect, async (req, res) => {
   const { countryName, countryFlag, visaTypes, description, docBadgeText } = req.body;
 
   try {
-    if (!countryName || !countryFlag || !visaTypes || !description) {
+    if (!countryName || !visaTypes || !description) {
       return res.status(400).json({ message: 'All fields are required' });
     }
 
@@ -35,9 +40,14 @@ router.post('/', protect, async (req, res) => {
       ? visaTypes.split(',').map(v => v.trim()).filter(Boolean)
       : visaTypes;
 
+    const resolvedFlag = resolveCountryFlag(countryName, countryFlag);
+    if (!resolvedFlag) {
+      return res.status(400).json({ message: 'Could not detect country flag from selected country' });
+    }
+
     const pathway = await VisaPathway.create({
       countryName,
-      countryFlag,
+      countryFlag: resolvedFlag,
       visaTypes: visaTypesArray,
       description,
       docBadgeText: docBadgeText || 'Detailed visa document provided'
@@ -65,7 +75,10 @@ router.put('/:id', protect, async (req, res) => {
     }
 
     if (countryName) pathway.countryName = countryName;
-    if (countryFlag) pathway.countryFlag = countryFlag;
+    pathway.countryFlag = resolveCountryFlag(
+      countryName || pathway.countryName,
+      countryFlag || pathway.countryFlag
+    );
     if (description) pathway.description = description;
     if (docBadgeText !== undefined) pathway.docBadgeText = docBadgeText;
     

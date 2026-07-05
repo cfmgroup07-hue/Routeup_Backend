@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const Booking = require('../models/Booking');
+const Service = require('../models/Service');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyNewBooking, notifyBookingUpdate } = require('../socket/socketHandler');
 const { sendEmail } = require('../utils/mailer');
@@ -123,32 +124,83 @@ router.post('/', upload.single('cv'), async (req, res) => {
     // Notify admin socket of pending booking
     notifyNewBooking(booking);
 
-    const servicesList = servicesArray.length > 0
-      ? servicesArray.join(', ')
-      : 'Career Advisory Session';
+    const dbServices = await Service.find({
+      key: { $in: servicesArray.map((s) => s.toLowerCase().trim()) }
+    });
+
+    const selectedSessionsHtml = dbServices.length > 0
+      ? dbServices.map((service) => {
+          let sessionDetails = '';
+          if (service.key === 'career' && (booking.careerDetails?.industry || booking.careerDetails?.position)) {
+            sessionDetails = `
+              <p style="margin: 8px 0 0; font-size: 14px; color: #475569;">
+                ${booking.careerDetails.industry ? `<strong>Industry:</strong> ${booking.careerDetails.industry}<br/>` : ''}
+                ${booking.careerDetails.position ? `<strong>Target Role:</strong> ${booking.careerDetails.position}` : ''}
+              </p>`;
+          }
+          if (service.key === 'visa' && (booking.migrationDetails?.preferredCountry || booking.migrationDetails?.passportStatus)) {
+            sessionDetails = `
+              <p style="margin: 8px 0 0; font-size: 14px; color: #475569;">
+                ${booking.migrationDetails.preferredCountry ? `<strong>Preferred Country:</strong> ${booking.migrationDetails.preferredCountry}<br/>` : ''}
+                ${booking.migrationDetails.passportStatus ? `<strong>Passport Status:</strong> ${booking.migrationDetails.passportStatus}<br/>` : ''}
+                ${booking.migrationDetails.overseasExperience ? `<strong>Overseas Experience:</strong> ${booking.migrationDetails.overseasExperience}` : ''}
+              </p>`;
+          }
+          if (service.key === 'placement' && booking.placementDetails?.preferredIndustry) {
+            sessionDetails = `
+              <p style="margin: 8px 0 0; font-size: 14px; color: #475569;">
+                <strong>Preferred Industry:</strong> ${booking.placementDetails.preferredIndustry}
+              </p>`;
+          }
+
+          return `
+            <div style="border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 12px; background: #ffffff;">
+              <p style="margin: 0 0 6px; font-size: 16px; font-weight: 700; color: #0f172a;">${service.title}</p>
+              <p style="margin: 0 0 8px; font-size: 14px; line-height: 1.5; color: #64748b;">${service.description}</p>
+              <p style="margin: 0; font-size: 14px;"><strong>Session Fee:</strong> Rs.${service.price} <span style="color: #64748b;">(60 min advisory session)</span></p>
+              ${sessionDetails}
+            </div>`;
+        }).join('')
+      : servicesArray.map((key) => `
+          <div style="border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 12px;">
+            <p style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a;">${key}</p>
+          </div>`).join('');
 
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
-        <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
-          <h2 style="margin: 0; font-size: 22px;">Your Appointment is Booked!</h2>
+        <div style="background-color: #0d7c3d; color: #fff; padding: 20px; text-align: center;">
+          <h2 style="margin: 0; font-size: 24px;">Payment Successful</h2>
+          <p style="margin: 8px 0 0; font-size: 14px; opacity: 0.95;">Your RouteUp session booking is confirmed</p>
         </div>
         <div style="padding: 30px;">
-          <p style="font-size: 16px;">Hello <strong>${booking.name}</strong>,</p>
-          <p style="font-size: 16px; line-height: 1.5;">Thank you for booking with RouteUp. Your payment has been received and your appointment is confirmed.</p>
+          <p style="font-size: 16px;">Dear <strong>${booking.name}</strong>,</p>
+          <p style="font-size: 16px; line-height: 1.6;">Thank you for choosing RouteUp. We are pleased to confirm that your payment has been received successfully and your advisory session request is now confirmed.</p>
 
-          <div style="background-color: #f8fafc; border-left: 4px solid #0d7c3d; padding: 15px; margin: 25px 0;">
-            <p style="margin: 0 0 10px 0; font-size: 16px;"><strong>Services:</strong> ${servicesList}</p>
-            <p style="margin: 0 0 10px 0; font-size: 16px;"><strong>Amount Paid:</strong> Rs.${booking.amount}</p>
-            <p style="margin: 0; font-size: 16px;"><strong>Payment ID:</strong> ${booking.paymentId}</p>
+          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 18px; margin: 25px 0; border-radius: 10px;">
+            <p style="margin: 0 0 14px 0; font-size: 13px; color: #166534; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">Selected Session(s)</p>
+            ${selectedSessionsHtml}
           </div>
 
-          <p style="font-size: 16px; line-height: 1.5;">Our team will contact you shortly with your meeting details. If you have any questions, reply to this email or reach us at hello@routeup.co.in.</p>
+          <div style="background-color: #f8fafc; border-left: 4px solid #0d7c3d; padding: 18px; margin: 25px 0; border-radius: 0 8px 8px 0;">
+            <p style="margin: 0 0 12px 0; font-size: 13px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">Payment Summary</p>
+            <p style="margin: 0 0 8px 0; font-size: 15px;"><strong>Total Amount Paid:</strong> Rs.${booking.amount}</p>
+            <p style="margin: 0 0 8px 0; font-size: 15px;"><strong>Payment ID:</strong> ${booking.paymentId}</p>
+            <p style="margin: 0; font-size: 15px;"><strong>Registered Email:</strong> ${booking.email}</p>
+          </div>
 
-          <p style="font-size: 16px; margin-top: 30px;">We look forward to helping you achieve your career goals!</p>
+          <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 18px; margin: 25px 0; border-radius: 0 8px 8px 0;">
+            <p style="margin: 0 0 8px 0; font-size: 15px; font-weight: 700; color: #1e40af;">What happens next?</p>
+            <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #334155;">Our admin team will review your request and connect with you within <strong>24 hours</strong> to schedule your session and share further details.</p>
+          </div>
 
-          <p style="font-size: 16px; color: #666; margin-top: 30px;">
-            Best regards,<br/>
-            <strong>The RouteUp Team</strong>
+          <p style="font-size: 15px; line-height: 1.6; color: #475569;">If you have any urgent questions, feel free to reply to this email or contact us at <a href="mailto:hello@routeup.co.in" style="color: #0d7c3d; text-decoration: none; font-weight: 600;">hello@routeup.co.in</a>.</p>
+
+          <p style="font-size: 16px; margin-top: 30px; line-height: 1.5;">We look forward to guiding you on your career journey.</p>
+
+          <p style="font-size: 15px; color: #64748b; margin-top: 28px;">
+            Warm regards,<br/>
+            <strong style="color: #0f172a;">The RouteUp Team</strong><br/>
+            <span style="font-size: 13px;">Career Advisory & Migration Guidance</span>
           </p>
         </div>
         <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
@@ -160,7 +212,7 @@ router.post('/', upload.single('cv'), async (req, res) => {
     try {
       await sendEmail({
         to: booking.email,
-        subject: 'RouteUp: Your Appointment is Booked',
+        subject: 'RouteUp: Payment Successful — We Will Connect Within 24 Hours',
         htmlContent: emailHtml,
       });
     } catch (emailError) {
@@ -346,10 +398,10 @@ router.post('/:id/schedule', protect, async (req, res) => {
   }
 });
 
-// @desc    Post meeting upload notes and doc
+// @desc    Post meeting upload notes and documents
 // @route   POST /api/bookings/:id/post-meeting
 // @access  Private (Admin)
-router.post('/:id/post-meeting', protect, upload.single('document'), async (req, res) => {
+router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (req, res) => {
   try {
     const { notes } = req.body;
     const booking = await Booking.findById(req.params.id);
@@ -358,42 +410,70 @@ router.post('/:id/post-meeting', protect, upload.single('document'), async (req,
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    const docPath = req.file ? `/uploads/${req.file.filename}` : '';
+    if (!notes?.trim() && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ message: 'Please add session notes or upload at least one file.' });
+    }
+
+    const uploadedPaths = (req.files || []).map((file) => `/uploads/${file.filename}`);
+    const existingPaths = booking.postMeetingDetails?.documentPaths || [];
+    const documentPaths = [...existingPaths, ...uploadedPaths];
+
     booking.postMeetingDetails = {
-      notes: notes || '',
-      documentPath: docPath
+      notes: notes?.trim() || booking.postMeetingDetails?.notes || '',
+      documentPath: documentPaths[0] || booking.postMeetingDetails?.documentPath || '',
+      documentPaths
     };
     await booking.save();
 
-    // Send email to candidate
+    const formattedNotes = (notes || booking.postMeetingDetails.notes || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br/>');
+
+    const attachmentListHtml = (req.files || []).length > 0
+      ? `<ul style="margin: 0; padding-left: 20px;">${req.files.map((file) => `<li style="margin-bottom: 6px;">${file.originalname}</li>`).join('')}</ul>`
+      : '<p style="margin: 0;">No new files attached in this email.</p>';
+
     const emailHtml = `
-      <h2>RouteUp: Post-Session Summary & Documents</h2>
-      <p>Hello ${booking.name},</p>
-      <p>Thank you for attending the session with us. Here is the summary of our discussion:</p>
-      <p><strong>Notes:</strong><br/>${notes}</p>
-      <br/>
-      ${docPath ? '<p>We have also attached a personalized document for you.</p>' : ''}
-      <br/>
-      <p>Excited to see where your career takes you.</p>
-      <br/>
-      <p>Best wishes!<br/>RouteUp Team</p>
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
+          <h2 style="margin: 0; font-size: 22px;">Your Session Summary is Ready</h2>
+        </div>
+        <div style="padding: 30px;">
+          <p style="font-size: 16px;">Hello <strong>${booking.name}</strong>,</p>
+          <p style="font-size: 16px; line-height: 1.5;">Thank you for completing your RouteUp advisory session. Please find your session summary and shared documents below.</p>
+
+          <div style="background-color: #f8fafc; border-left: 4px solid #0d7c3d; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Session Notes</strong></p>
+            <p style="margin: 0; font-size: 16px; line-height: 1.6;">${formattedNotes || 'Your counselor has shared follow-up documents with you.'}</p>
+          </div>
+
+          <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Attached Files</strong></p>
+            ${attachmentListHtml}
+          </div>
+
+          <p style="font-size: 16px; line-height: 1.5;">If you have any questions about your next steps, simply reply to this email and our team will assist you.</p>
+
+          <p style="font-size: 16px; margin-top: 30px;">Best regards,<br/><strong>The RouteUp Team</strong></p>
+        </div>
+        <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
+          &copy; ${new Date().getFullYear()} RouteUp. All rights reserved.
+        </div>
+      </div>
     `;
 
-    const attachments = [];
-    if (docPath) {
-      // The actual path on the server file system
-      const absPath = path.join(__dirname, '../..', docPath);
-      attachments.push({
-        filename: req.file.originalname,
-        path: absPath
-      });
-    }
+    const attachments = (req.files || []).map((file) => ({
+      filename: file.originalname,
+      path: path.join(uploadDir, file.filename)
+    }));
 
     await sendEmail({
       to: booking.email,
-      subject: 'RouteUp: Session Summary & Documents',
+      subject: 'RouteUp: Your Session Summary & Documents',
       htmlContent: emailHtml,
-      attachments: attachments
+      attachments
     });
 
     notifyBookingUpdate(booking);
