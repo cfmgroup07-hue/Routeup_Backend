@@ -34,6 +34,29 @@ jobs:
 
             npm install
 
+            # Fix HTTP 413: raise nginx upload limit (default is often 1m)
+            if command -v nginx >/dev/null 2>&1; then
+              echo "Updating nginx client_max_body_size to 25m..."
+              echo 'client_max_body_size 25m;' | sudo tee /etc/nginx/conf.d/routeup-upload-limit.conf >/dev/null
+              for conf in /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*; do
+                if [ -f "$conf" ] && grep -q "client_max_body_size" "$conf" 2>/dev/null; then
+                  sudo sed -i 's/client_max_body_size[[:space:]]*[0-9]\+[kKmMgG]\?;/client_max_body_size 25m;/g' "$conf" || true
+                fi
+              done
+              # If api site has no body size directive yet, inject into server blocks for api.routeup.co.in
+              for conf in /etc/nginx/sites-available/* /etc/nginx/sites-enabled/*; do
+                if [ -f "$conf" ] && grep -qi "api.routeup" "$conf" 2>/dev/null && ! grep -q "client_max_body_size" "$conf" 2>/dev/null; then
+                  sudo sed -i '/server_name/a\    client_max_body_size 25m;' "$conf" || true
+                fi
+              done
+              if sudo nginx -t; then
+                sudo systemctl reload nginx || sudo service nginx reload || true
+                echo "nginx reload OK"
+              else
+                echo "nginx config test failed - skipping reload"
+              fi
+            fi
+
             pm2 restart routeup-backend || pm2 start npm --name routeup-backend -- start
 
             pm2 save
