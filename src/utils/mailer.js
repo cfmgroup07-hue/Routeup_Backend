@@ -5,24 +5,24 @@ const sendEmail = async ({ to, subject, htmlContent, attachments = [] }) => {
     let transporter;
 
     if (process.env.EMAIL_HOST && process.env.EMAIL_USER) {
-      // Use Real SMTP credentials from .env
+      // Use Real SMTP credentials from .env (Hostinger)
+      const emailPass = (process.env.EMAIL_PASS || '').replace(/^["']|["']$/g, '');
       transporter = nodemailer.createTransport({
         host: process.env.EMAIL_HOST,
         port: process.env.EMAIL_PORT || 465,
-        secure: Number(process.env.EMAIL_PORT) === 465, // true for 465, false for other ports
+        secure: Number(process.env.EMAIL_PORT) === 465,
         auth: {
           user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS,
+          pass: emailPass,
         },
       });
     } else {
-      // Fallback to Ethereal Email for local testing if env is missing
-      console.warn("Using Ethereal testing email because real credentials are missing from .env");
+      console.warn('Using Ethereal testing email because real credentials are missing from .env');
       let testAccount = await nodemailer.createTestAccount();
       transporter = nodemailer.createTransport({
-        host: "smtp.ethereal.email",
+        host: 'smtp.ethereal.email',
         port: 587,
-        secure: false, 
+        secure: false,
         auth: {
           user: testAccount.user,
           pass: testAccount.pass,
@@ -35,20 +35,20 @@ const sendEmail = async ({ to, subject, htmlContent, attachments = [] }) => {
       to: to,
       subject: subject,
       html: htmlContent,
-      attachments: attachments
+      attachments: attachments,
     });
 
-    console.log("Email sent successfully to:", to);
+    console.log('Email sent successfully to:', to);
     if (!process.env.EMAIL_HOST) {
-      console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
+      console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
     }
     return info;
   } catch (error) {
-    console.error("Error sending email: ", error);
+    console.error('Error sending email: ', error);
     throw error;
   }
 };
 
 module.exports = {
-  sendEmail
+  sendEmail,
 };

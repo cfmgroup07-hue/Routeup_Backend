@@ -49,9 +49,9 @@ const mailUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.jpg', '.jpeg', '.png', '.webp', '.txt', '.zip'];
+    const allowed = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp'];
     if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('File type not allowed for email attachment'));
+    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
   },
 });
 
@@ -61,9 +61,6 @@ const escapeHtml = (value = '') =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-
-const formatBodyHtml = (value = '') =>
-  escapeHtml(value).replace(/\n/g, '<br/>');
 
 // @desc    Submit Australia PR lead (public)
 // @route   POST /api/pr-leads
@@ -213,98 +210,92 @@ router.put('/:id', protect, async (req, res) => {
   }
 });
 
-// @desc    Send email to PR lead
+// @desc    Send follow-up email to PR lead (same pattern as booking post-meeting)
 // @route   POST /api/pr-leads/:id/send-email
 // @access  Private (Admin)
-router.post('/:id/send-email', protect, mailUpload.array('attachments', 10), async (req, res) => {
+router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async (req, res) => {
   try {
     const lead = await AustraliaPRLead.findById(req.params.id);
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
-    const subject = (req.body.subject || '').trim();
-    const message = (req.body.message || '').trim();
+    const { notes } = req.body;
 
-    if (!subject) {
-      return res.status(400).json({ message: 'Subject is required' });
-    }
-    if (!message) {
-      return res.status(400).json({ message: 'Message body is required' });
+    if (!notes?.trim() && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ message: 'Please add notes or upload at least one file.' });
     }
 
-    const files = req.files || [];
-    const attachmentListHtml = files.length
-      ? `<ul style="margin:0;padding-left:20px;">${files
-          .map((file) => `<li style="margin-bottom:6px;">${escapeHtml(file.originalname)}</li>`)
-          .join('')}</ul>`
-      : '<p style="margin:0;color:#64748b;">No files attached to this email.</p>';
+    if (notes?.trim()) {
+      lead.adminNotes = notes.trim();
+    }
+    if (lead.status === 'New') {
+      lead.status = 'Contacted';
+    }
+    await lead.save();
+
+    const formattedNotes = (notes || lead.adminNotes || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br/>');
+
+    const attachmentListHtml = (req.files || []).length > 0
+      ? `<ul style="margin: 0; padding-left: 20px;">${req.files.map((file) => `<li style="margin-bottom: 6px;">${escapeHtml(file.originalname)}</li>`).join('')}</ul>`
+      : '<p style="margin: 0;">No new files attached in this email.</p>';
 
     const emailHtml = `
-      <div style="font-family:Arial,Helvetica,sans-serif;color:#1e293b;max-width:640px;margin:0 auto;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#ffffff;">
-        <div style="background:linear-gradient(135deg,#0d7c3d,#0a6331);color:#ffffff;padding:22px 24px;text-align:center;">
-          <div style="font-size:13px;letter-spacing:0.4px;opacity:0.9;margin-bottom:6px;">RouteUp · Australia PR Guidance</div>
-          <h2 style="margin:0;font-size:22px;font-weight:700;">Message from RouteUp</h2>
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
+          <h2 style="margin: 0; font-size: 22px;">Your Australia PR Follow-Up is Ready</h2>
         </div>
-        <div style="padding:28px 26px;">
-          <p style="font-size:16px;margin:0 0 14px;">Hello <strong>${escapeHtml(lead.name)}</strong>,</p>
-          <p style="font-size:15px;line-height:1.7;margin:0 0 22px;color:#475569;">
-            You have received an update regarding your Australia PR enquiry with RouteUp.
-          </p>
+        <div style="padding: 30px;">
+          <p style="font-size: 16px;">Hello <strong>${escapeHtml(lead.name)}</strong>,</p>
+          <p style="font-size: 16px; line-height: 1.5;">Thank you for sharing your Australia PR details with RouteUp. Please find your follow-up notes and shared documents below.</p>
 
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:22px;">
-            <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#0d7c3d;text-transform:uppercase;letter-spacing:0.5px;">Subject</p>
-            <p style="margin:0;font-size:16px;font-weight:700;color:#0f172a;">${escapeHtml(subject)}</p>
+          <div style="background-color: #f0faf4; border-left: 4px solid #0d7c3d; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Your Enquiry</strong></p>
+            <p style="margin: 0; font-size: 15px; line-height: 1.6;">
+              ${escapeHtml(lead.occupation || 'Australia PR')}
+              ${lead.anzsco ? ` · ANZSCO ${escapeHtml(lead.anzsco)}` : ''}
+              ${lead.assessingBody ? ` · ${escapeHtml(lead.assessingBody)}` : ''}
+            </p>
           </div>
 
-          <div style="background:#ffffff;border-left:4px solid #0d7c3d;padding:4px 0 4px 16px;margin-bottom:24px;">
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;">Message</p>
-            <div style="font-size:15px;line-height:1.75;color:#334155;">${formatBodyHtml(message)}</div>
+          <div style="background-color: #f8fafc; border-left: 4px solid #0d7c3d; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Follow-Up Notes</strong></p>
+            <p style="margin: 0; font-size: 16px; line-height: 1.6;">${formattedNotes || 'Our team has shared follow-up documents with you.'}</p>
           </div>
 
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 18px;margin-bottom:24px;">
-            <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:#1d4ed8;text-transform:uppercase;letter-spacing:0.5px;">Attachments</p>
+          <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Attached Files</strong></p>
             ${attachmentListHtml}
           </div>
 
-          <div style="background:#f0faf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;margin-bottom:24px;font-size:13px;color:#166534;line-height:1.6;">
-            <strong>Your enquiry:</strong> ${escapeHtml(lead.occupation || 'Australia PR')}
-            ${lead.anzsco ? ` · ANZSCO ${escapeHtml(lead.anzsco)}` : ''}
-            ${lead.assessingBody ? ` · ${escapeHtml(lead.assessingBody)}` : ''}
-          </div>
+          <p style="font-size: 16px; line-height: 1.5;">If you have any questions about your next steps, simply reply to this email and our team will assist you.</p>
 
-          <p style="font-size:15px;line-height:1.6;margin:0 0 8px;color:#475569;">
-            If you have questions, reply to this email and our team will assist you.
-          </p>
-          <p style="font-size:15px;margin:24px 0 0;">Best regards,<br/><strong>The RouteUp Team</strong><br/>
-            <a href="mailto:hello@routeup.co.in" style="color:#0d7c3d;text-decoration:none;">hello@routeup.co.in</a>
-          </p>
+          <p style="font-size: 16px; margin-top: 30px;">Best regards,<br/><strong>The RouteUp Team</strong></p>
         </div>
-        <div style="background:#f1f5f9;padding:14px;text-align:center;font-size:12px;color:#64748b;">
+        <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
           &copy; ${new Date().getFullYear()} RouteUp. All rights reserved.
         </div>
       </div>
     `;
 
-    const attachments = files.map((file) => ({
+    const attachments = (req.files || []).map((file) => ({
       filename: file.originalname,
       path: path.join(mailUploadDir, file.filename),
     }));
 
     await sendEmail({
       to: lead.email,
-      subject: subject.startsWith('RouteUp') ? subject : `RouteUp: ${subject}`,
+      subject: 'RouteUp: Your Australia PR Follow-Up & Documents',
       htmlContent: emailHtml,
       attachments,
     });
 
-    if (lead.status === 'New') {
-      lead.status = 'Contacted';
-      await lead.save();
-    }
-
-    res.json({ message: 'Email sent successfully', lead });
+    res.json({ message: 'Notes uploaded and email sent!', lead });
   } catch (error) {
     console.error('PR lead email error:', error);
-    res.status(500).json({ message: error.message || 'Failed to send email' });
+    res.status(500).json({ message: error.message });
   }
 });
 
