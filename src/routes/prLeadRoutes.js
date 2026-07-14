@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const AustraliaPRLead = require('../models/AustraliaPRLead');
 const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
@@ -80,12 +81,53 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
       country,
       state,
       documentMeta,
+      amount,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
     } = req.body;
 
     if (!name || !phone || !email || !occupation || !source) {
       return res.status(400).json({
         message: 'Name, phone, email, occupation, and source are required',
       });
+    }
+
+    // Eligibility check session requires Razorpay payment verification (Rs.2999)
+    let paymentStatus = 'Pending';
+    let paymentId = '';
+    let paidAmount = Number(amount) || 0;
+
+    if (source === 'eligibility-check') {
+      if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        return res.status(400).json({ message: 'Payment details are missing' });
+      }
+
+      const bodyToHash = `${razorpay_order_id}|${razorpay_payment_id}`;
+      const expectedSignature = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(bodyToHash)
+        .digest('hex');
+
+      if (expectedSignature !== razorpay_signature) {
+        return res.status(400).json({ message: 'Invalid payment signature. Submission aborted.' });
+      }
+
+      paymentStatus = 'Paid';
+      paymentId = razorpay_payment_id;
+      paidAmount = paidAmount || 2999;
+    } else if (razorpay_order_id && razorpay_payment_id && razorpay_signature) {
+      const bodyToHash = `${razorpay_order_id}|${razorpay_payment_id}`;
+      const expectedSignature = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+        .update(bodyToHash)
+        .digest('hex');
+
+      if (expectedSignature === razorpay_signature) {
+        paymentStatus = 'Paid';
+        paymentId = razorpay_payment_id;
+        paidAmount = paidAmount || 2999;
+      }
     }
 
     let metaList = [];
@@ -135,6 +177,9 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
       country: country || '',
       state: state || '',
       uploadedDocuments,
+      amount: paidAmount,
+      paymentStatus,
+      paymentId,
     });
 
     res.status(201).json(lead);

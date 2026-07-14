@@ -69,6 +69,19 @@ const AustraliaPRLeadSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    amount: {
+      type: Number,
+      default: 0,
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['Pending', 'Paid'],
+      default: 'Pending',
+    },
+    paymentId: {
+      type: String,
+      default: '',
+    },
   },
   { timestamps: true }
 );
