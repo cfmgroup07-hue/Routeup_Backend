@@ -161,6 +161,7 @@ app.use('/api/bookings', require('./routes/bookingRoutes'));
 app.use('/api/services', require('./routes/serviceRoutes'));
 app.use('/api/visa-pathways', require('./routes/visaRoutes'));
 app.use('/api/payment', require('./routes/paymentRoutes'));
+app.use('/api/pr-leads', require('./routes/prLeadRoutes'));
 
 
 // Basic health check route
