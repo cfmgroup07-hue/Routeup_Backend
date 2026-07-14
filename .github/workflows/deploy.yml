@@ -34,6 +34,22 @@ jobs:
 
             npm install
 
+            # Allow larger multipart uploads (PR docs / email attachments)
+            # Default nginx limit is often 1m which causes HTTP 413
+            if command -v nginx >/dev/null 2>&1; then
+              echo "Updating nginx client_max_body_size..."
+              sudo tee /etc/nginx/conf.d/routeup-upload-limit.conf >/dev/null <<'NGINX'
+# RouteUp API upload limit (PR documents, CVs, attachments)
+client_max_body_size 25m;
+NGINX
+              if sudo nginx -t; then
+                sudo systemctl reload nginx || sudo service nginx reload || true
+                echo "nginx reload OK (client_max_body_size=25m)"
+              else
+                echo "nginx config test failed — skipping reload"
+              fi
+            fi
+
             pm2 restart routeup-backend || pm2 start npm --name routeup-backend -- start
 
             pm2 save
