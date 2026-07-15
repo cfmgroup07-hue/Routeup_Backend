@@ -285,22 +285,47 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
 
     const { documentTitles = [], message = '' } = req.body;
     if (!Array.isArray(documentTitles) || documentTitles.length === 0) {
-      return res.status(400).json({ message: 'Select at least one incorrect document.' });
+      return res.status(400).json({ message: 'Select at least one document to request.' });
     }
 
-    const titleSet = new Set(documentTitles);
+    const titleSet = new Set(documentTitles.map((t) => String(t || '').trim()).filter(Boolean));
+    if (titleSet.size === 0) {
+      return res.status(400).json({ message: 'Select at least one document to request.' });
+    }
+
+    if (!Array.isArray(lead.uploadedDocuments)) {
+      lead.uploadedDocuments = [];
+    }
+
+    const note =
+      message ||
+      'Please upload a clearer / correct version of this document (or upload it if you have not yet).';
+
     let marked = 0;
-    (lead.uploadedDocuments || []).forEach((doc) => {
-      if (titleSet.has(doc.title)) {
+    for (const title of titleSet) {
+      let doc = lead.uploadedDocuments.find((d) => d.title === title);
+      if (!doc) {
+        // Admin can request upload for docs the student never submitted
+        lead.uploadedDocuments.push({
+          title,
+          fileName: '',
+          filePath: '',
+          needsReupload: true,
+          reuploadNote: note,
+        });
+        marked += 1;
+      } else {
         doc.needsReupload = true;
-        doc.reuploadNote = message || 'Please upload a clearer / correct version of this document.';
+        doc.reuploadNote = note;
         marked += 1;
       }
-    });
+    }
 
     if (marked === 0) {
-      return res.status(400).json({ message: 'None of the selected documents were found on this lead.' });
+      return res.status(400).json({ message: 'Could not mark any documents for re-upload.' });
     }
+
+    lead.markModified('uploadedDocuments');
 
     const token = crypto.randomBytes(24).toString('hex');
     lead.reuploadToken = token;
@@ -319,8 +344,8 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
       <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#1a1a2e;">
         <h2 style="color:#0d7c3d;">Action needed: re-upload documents</h2>
         <p>Hi ${escapeHtml(lead.name)},</p>
-        <p>Our team reviewed your study abroad documents for <strong>${escapeHtml(lead.country)}</strong>
-        (${escapeHtml(lead.applyingCourse)}) and needs a corrected copy of the following:</p>
+        <p>Our team reviewed your study abroad application for <strong>${escapeHtml(lead.country)}</strong>
+        (${escapeHtml(lead.applyingCourse)}) and needs you to upload the following documents:</p>
         <ul style="padding-left:20px;">${docListHtml}</ul>
         ${
           message
