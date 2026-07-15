@@ -73,6 +73,13 @@ const notifyVisaPathwayDeleted = (pathwayId) => {
   }
 };
 
+const emitStudyAbroadLeadUpdated = (lead) => {
+  if (io) {
+    io.to('admin_room').emit('study_abroad_lead_updated', lead);
+    console.log(`Socket event emitted: study_abroad_lead_updated for ID ${lead._id}`);
+  }
+};
+
 module.exports = {
   init,
   notifyNewBooking,
@@ -82,6 +89,7 @@ module.exports = {
   notifyServiceDeleted,
   notifyVisaPathwayCreated,
   notifyVisaPathwayUpdated,
-  notifyVisaPathwayDeleted
+  notifyVisaPathwayDeleted,
+  emitStudyAbroadLeadUpdated,
 };
 

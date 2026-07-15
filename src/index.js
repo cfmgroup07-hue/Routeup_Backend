@@ -146,8 +146,8 @@ seedData();
 
 // Middleware
 app.use(cors({ origin: clientUrl }));
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Serve Uploaded Files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -162,6 +162,7 @@ app.use('/api/services', require('./routes/serviceRoutes'));
 app.use('/api/visa-pathways', require('./routes/visaRoutes'));
 app.use('/api/payment', require('./routes/paymentRoutes'));
 app.use('/api/pr-leads', require('./routes/prLeadRoutes'));
+app.use('/api/study-abroad-leads', require('./routes/studyAbroadLeadRoutes'));
 
 
 // Basic health check route
