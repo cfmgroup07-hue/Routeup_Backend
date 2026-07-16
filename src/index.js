@@ -58,11 +58,16 @@ const seedData = async () => {
     const adminExists = await Admin.findOne({ email: 'admin@gmail.com' });
     if (!adminExists) {
       await Admin.create({
+        name: 'Admin',
         email: 'admin@gmail.com',
         password: 'Admin@123'
       });
       console.log('Admin user seeded successfully: admin@gmail.com / Admin@123');
     } else {
+      if (!adminExists.name) {
+        adminExists.name = 'Admin';
+        await adminExists.save();
+      }
       console.log('Admin user already exists in database');
     }
 

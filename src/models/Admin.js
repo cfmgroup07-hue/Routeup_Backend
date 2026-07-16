@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const AdminSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    default: 'Admin',
+    trim: true,
+  },
   email: {
     type: String,
     required: true,
@@ -12,7 +17,11 @@ const AdminSchema = new mongoose.Schema({
   password: {
     type: String,
     required: true
-  }
+  },
+  avatar: {
+    type: String,
+    default: '',
+  },
 }, { timestamps: true });
 
 // Hash password before saving if it has been modified
