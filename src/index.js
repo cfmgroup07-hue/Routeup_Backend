@@ -19,13 +19,31 @@ if (!process.env.JWT_SECRET) {
 const app = express();
 const server = http.createServer(app);
 
-// Define allowed origins
-const clientUrl = process.env.CLIENT_URL || '*';
+// Define allowed origins (comma-separated CLIENT_URL + production defaults)
+const defaultOrigins = [
+  'https://routeup.co.in',
+  'https://www.routeup.co.in',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+const envOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+const allowedOrigins = [...new Set([...envOrigins, ...defaultOrigins])];
+
+const corsOrigin = (origin, callback) => {
+  // Allow same-origin / non-browser tools (no Origin header)
+  if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    return callback(null, true);
+  }
+  return callback(new Error(`CORS blocked for origin: ${origin}`));
+};
 
 // Initialize Socket.io with CORS
 const io = socketIo(server, {
   cors: {
-    origin: clientUrl,
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PUT', 'DELETE']
   }
 });
@@ -145,7 +163,7 @@ const seedData = async () => {
 seedData();
 
 // Middleware
-app.use(cors({ origin: clientUrl }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
