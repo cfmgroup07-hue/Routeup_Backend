@@ -344,6 +344,47 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
   }
 });
 
+// @desc    Delete a specific uploaded document
+// @route   DELETE /api/pr-leads/:id/document
+// @access  Private (Admin)
+router.delete('/:id/document', protect, async (req, res) => {
+  const { title } = req.body;
+  if (!title) {
+    return res.status(400).json({ message: 'Document title is required' });
+  }
+
+  try {
+    const lead = await AustraliaPRLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const docIndex = (lead.uploadedDocuments || []).findIndex((d) => d.title === title);
+    if (docIndex === -1) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    const doc = lead.uploadedDocuments[docIndex];
+    if (doc.filePath) {
+      const abs = path.join(__dirname, '../..', doc.filePath.replace(/^\//, ''));
+      if (fs.existsSync(abs)) {
+        try {
+          fs.unlinkSync(abs);
+        } catch (err) {
+          console.error('Failed to delete PR doc file:', err.message);
+        }
+      }
+    }
+
+    lead.uploadedDocuments.splice(docIndex, 1);
+    lead.markModified('uploadedDocuments');
+    await lead.save();
+
+    res.json({ message: 'Document deleted successfully', lead });
+  } catch (error) {
+    console.error('Delete PR document error:', error);
+    res.status(500).json({ message: 'Failed to delete document' });
+  }
+});
+
 // @desc    Delete PR lead
 // @route   DELETE /api/pr-leads/:id
 // @access  Private (Admin)

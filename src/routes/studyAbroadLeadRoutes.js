@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const StudyAbroadLead = require('../models/StudyAbroadLead');
+const Notification = require('../models/Notification');
 const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
 const socketHandler = require('../socket/socketHandler');
@@ -241,6 +242,20 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
 
     await lead.save();
 
+    // Create and save notification for the admin
+    try {
+      const notification = await Notification.create({
+        title: 'Documents Re-uploaded',
+        message: `${lead.name} has re-uploaded requested documents for ${lead.applyingCourse} (${lead.country}).`,
+        type: 'document_reupload',
+        link: 'students',
+        isRead: false,
+      });
+      socketHandler.emitNewNotification(notification);
+    } catch (notifErr) {
+      console.error('Failed to create/emit notification:', notifErr);
+    }
+
     try {
       socketHandler.emitStudyAbroadLeadUpdated(lead);
     } catch {
@@ -332,8 +347,25 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
     lead.reuploadExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     if (lead.status === 'New') lead.status = 'Contacted';
     await lead.save();
+    const host = req.get('host') || '';
+    const origin = req.get('origin') || req.headers.origin || '';
 
-    const frontendBase = (process.env.CLIENT_URL || 'https://routeup.co.in').replace(/\/$/, '');
+    let frontendBase = 'https://routeup.co.in'; // Default live
+
+    // If the request originates from a browser, use the origin
+    if (origin && origin.startsWith('http')) {
+      frontendBase = origin;
+    } else if (process.env.CLIENT_URL) {
+      frontendBase = process.env.CLIENT_URL;
+    }
+
+    // Guard against sending localhost URLs in production
+    const isLocalRequest = host.includes('localhost') || host.includes('127.0.0.1');
+    if (!isLocalRequest && frontendBase.includes('localhost')) {
+      frontendBase = 'https://routeup.co.in';
+    }
+
+    frontendBase = frontendBase.replace(/\/$/, '');
     const reuploadUrl = `${frontendBase}/study-abroad-reupload/${token}`;
 
     const docListHtml = documentTitles
@@ -456,6 +488,52 @@ router.put('/:id', protect, async (req, res) => {
   } catch (error) {
     console.error('Update study abroad lead error:', error);
     res.status(500).json({ message: 'Failed to update lead' });
+  }
+});
+
+// @desc    Delete a specific uploaded document
+// @route   DELETE /api/study-abroad-leads/:id/document
+// @access  Private (Admin)
+router.delete('/:id/document', protect, async (req, res) => {
+  const { title } = req.body;
+  if (!title) {
+    return res.status(400).json({ message: 'Document title is required' });
+  }
+
+  try {
+    const lead = await StudyAbroadLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const docIndex = (lead.uploadedDocuments || []).findIndex((d) => d.title === title);
+    if (docIndex === -1) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    const doc = lead.uploadedDocuments[docIndex];
+    if (doc.filePath) {
+      deleteFileIfExists(doc.filePath);
+    }
+
+    if (doc.needsReupload) {
+      doc.fileName = '';
+      doc.filePath = '';
+    } else {
+      lead.uploadedDocuments.splice(docIndex, 1);
+    }
+
+    lead.markModified('uploadedDocuments');
+    await lead.save();
+
+    try {
+      socketHandler.emitStudyAbroadLeadUpdated(lead);
+    } catch {
+      /* ignore */
+    }
+
+    res.json({ message: 'Document deleted successfully', lead });
+  } catch (error) {
+    console.error('Delete study abroad document error:', error);
+    res.status(500).json({ message: 'Failed to delete document' });
   }
 });
 

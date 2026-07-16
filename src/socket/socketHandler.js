@@ -80,6 +80,13 @@ const emitStudyAbroadLeadUpdated = (lead) => {
   }
 };
 
+const emitNewNotification = (notification) => {
+  if (io) {
+    io.to('admin_room').emit('new_notification', notification);
+    console.log(`Socket event emitted: new_notification for ID ${notification._id}`);
+  }
+};
+
 module.exports = {
   init,
   notifyNewBooking,
@@ -91,5 +98,6 @@ module.exports = {
   notifyVisaPathwayUpdated,
   notifyVisaPathwayDeleted,
   emitStudyAbroadLeadUpdated,
+  emitNewNotification,
 };
 
