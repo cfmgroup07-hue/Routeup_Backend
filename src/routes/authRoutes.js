@@ -5,6 +5,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const Admin = require('../models/Admin');
+const ActivityLog = require('../models/ActivityLog');
+const { logAdminActivity } = require('../utils/activityLogger');
 const { protect } = require('../middleware/authMiddleware');
 
 const avatarDir = path.join(__dirname, '../../uploads/admin-avatars');
@@ -50,6 +52,7 @@ const toAdminPayload = (admin, token) => ({
   _id: admin._id,
   name: admin.name || 'Admin',
   email: admin.email,
+  role: admin.role || 'admin',
   avatar: admin.avatar || '',
   ...(token ? { token } : {}),
 });
@@ -69,6 +72,7 @@ router.post('/login', async (req, res) => {
 
     if (admin && (await admin.matchPassword(password))) {
       const token = signToken(admin._id);
+      await logAdminActivity(admin, 'LOGIN', 'Logged into the admin panel');
       return res.json(toAdminPayload(admin, token));
     }
 
@@ -137,6 +141,11 @@ router.put('/profile', protect, (req, res) => {
       }
 
       await admin.save();
+      await logAdminActivity(
+        admin,
+        'UPDATE_PROFILE',
+        `Updated profile details (Name: ${admin.name}, Email: ${admin.email})`
+      );
       return res.json({
         message: 'Profile updated successfully',
         ...toAdminPayload(admin),
@@ -172,8 +181,30 @@ router.put('/password', protect, async (req, res) => {
 
     admin.password = newPassword;
     await admin.save();
+    await logAdminActivity(admin, 'CHANGE_PASSWORD', 'Changed password');
 
     return res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Get admin activity logs (Super Admin only)
+// @route   GET /api/auth/activities
+// @access  Private (Super Admin)
+router.get('/activities', protect, async (req, res) => {
+  try {
+    if (req.admin.role !== 'superadmin') {
+      return res.status(403).json({ message: 'Access denied: Super Admin role required' });
+    }
+
+    const logs = await ActivityLog.find()
+      .populate('admin', 'name email role avatar')
+      .sort({ createdAt: -1 });
+
+    const filteredLogs = logs.filter(log => !log.admin || log.admin.role !== 'superadmin');
+
+    return res.json(filteredLogs);
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }

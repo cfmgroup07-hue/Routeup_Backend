@@ -60,15 +60,46 @@ const seedData = async () => {
       await Admin.create({
         name: 'Admin',
         email: 'admin@gmail.com',
-        password: 'Admin@123'
+        password: 'Admin@123',
+        role: 'admin'
       });
       console.log('Admin user seeded successfully: admin@gmail.com / Admin@123');
     } else {
+      let adminModified = false;
       if (!adminExists.name) {
         adminExists.name = 'Admin';
+        adminModified = true;
+      }
+      if (adminExists.role !== 'admin') {
+        adminExists.role = 'admin';
+        adminModified = true;
+      }
+      if (adminModified) {
         await adminExists.save();
       }
       console.log('Admin user already exists in database');
+    }
+
+    // Seed Super Admin User
+    const superAdminExists = await Admin.findOne({ email: 'superadmin@gmail.com' });
+    if (!superAdminExists) {
+      await Admin.create({
+        name: 'Super Admin',
+        email: 'superadmin@gmail.com',
+        password: 'Superadmin@123',
+        role: 'superadmin'
+      });
+      console.log('Super Admin user seeded successfully: superadmin@gmail.com / Superadmin@123');
+    } else {
+      let superModified = false;
+      if (superAdminExists.role !== 'superadmin') {
+        superAdminExists.role = 'superadmin';
+        superModified = true;
+      }
+      if (superModified) {
+        await superAdminExists.save();
+      }
+      console.log('Super Admin user already exists in database');
     }
 
     // Seed Services

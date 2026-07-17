@@ -9,6 +9,7 @@ const Service = require('../models/Service');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyNewBooking, notifyBookingUpdate } = require('../socket/socketHandler');
 const { sendEmail } = require('../utils/mailer');
+const { logAdminActivity } = require('../utils/activityLogger');
 
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, '../../uploads');
@@ -327,6 +328,13 @@ router.put('/:id', protect, async (req, res) => {
     // Notify admin socket of status/notes change
     notifyBookingUpdate(booking);
 
+    await logAdminActivity(
+      req.admin,
+      'UPDATE_BOOKING',
+      `Updated candidate booking for ${booking.name}. Status: ${booking.status}`,
+      { bookingId: booking._id, candidateName: booking.name, status: booking.status, counselorNotes }
+    );
+
     res.json(booking);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -392,6 +400,22 @@ router.post('/:id/schedule', protect, async (req, res) => {
     });
 
     notifyBookingUpdate(booking);
+
+    await logAdminActivity(
+      req.admin,
+      'SCHEDULE_MEETING',
+      `Scheduled meeting with ${booking.name} on ${formattedDate} at ${formattedTime}`,
+      {
+        bookingId: booking._id,
+        candidateName: booking.name,
+        email: booking.email,
+        subject: 'RouteUp: Your Session is Scheduled',
+        dateTime,
+        link,
+        isEmail: true
+      }
+    );
+
     res.json({ message: 'Meeting scheduled successfully', booking });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -477,6 +501,22 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
     });
 
     notifyBookingUpdate(booking);
+
+    await logAdminActivity(
+      req.admin,
+      'SEND_POST_MEETING_EMAIL',
+      `Sent post-meeting session summary to candidate ${booking.name}`,
+      {
+        bookingId: booking._id,
+        candidateName: booking.name,
+        email: booking.email,
+        subject: 'RouteUp: Your Session Summary & Documents',
+        notes: notes || '',
+        attachments: (req.files || []).map(f => f.originalname),
+        isEmail: true
+      }
+    );
+
     res.json({ message: 'Post-meeting details saved and email sent', booking });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -498,6 +538,14 @@ router.put('/:id/complete', protect, async (req, res) => {
     await booking.save();
 
     notifyBookingUpdate(booking);
+
+    await logAdminActivity(
+      req.admin,
+      'COMPLETE_BOOKING',
+      `Marked booking for ${booking.name} as Completed`,
+      { bookingId: booking._id, candidateName: booking.name }
+    );
+
     res.json({ message: 'Booking marked as completed', booking });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -515,7 +563,15 @@ router.delete('/:id', protect, async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
+    const candidateName = booking.name;
     await Booking.findByIdAndDelete(req.params.id);
+
+    await logAdminActivity(
+      req.admin,
+      'DELETE_BOOKING',
+      `Deleted booking for candidate ${candidateName}`,
+      { bookingId: req.params.id, candidateName }
+    );
 
     res.json({ message: 'Booking deleted successfully', id: req.params.id });
   } catch (error) {

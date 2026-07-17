@@ -22,6 +22,11 @@ const AdminSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  role: {
+    type: String,
+    enum: ['admin', 'superadmin'],
+    default: 'admin'
+  },
 }, { timestamps: true });
 
 // Hash password before saving if it has been modified

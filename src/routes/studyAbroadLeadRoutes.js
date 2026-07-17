@@ -8,6 +8,7 @@ const StudyAbroadLead = require('../models/StudyAbroadLead');
 const Notification = require('../models/Notification');
 const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
+const { logAdminActivity } = require('../utils/activityLogger');
 const socketHandler = require('../socket/socketHandler');
 
 const uploadDir = path.join(__dirname, '../../uploads/study-abroad-docs');
@@ -390,6 +391,21 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
       attachments,
     });
 
+    await logAdminActivity(
+      req.admin,
+      'SEND_STUDENT_EMAIL',
+      `Sent email to Study Abroad candidate ${lead.name}`,
+      {
+        leadId: lead._id,
+        candidateName: lead.name,
+        email: lead.email,
+        subject: subject.trim(),
+        message: notes || '',
+        attachments: (req.files || []).map(f => f.originalname),
+        isEmail: true
+      }
+    );
+
     res.json({ message: 'Email sent successfully!', lead });
   } catch (error) {
     console.error('Study abroad follow-up email error:', error);
@@ -526,6 +542,24 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
     }
 
     if (!emailSent) {
+      await logAdminActivity(
+        req.admin,
+        'REQUEST_STUDENT_REUPLOAD',
+        `Requested Study Abroad doc re-upload from student ${lead.name} (Email failed)`,
+        {
+          leadId: lead._id,
+          candidateName: lead.name,
+          email: lead.email,
+          subject: 'RouteUp — Please re-upload your study abroad documents',
+          requestedDocuments: documentTitles,
+          message: message || '',
+          reuploadUrl,
+          isEmail: true,
+          emailSent: false,
+          emailError
+        }
+      );
+
       return res.status(502).json({
         message: `Documents marked for re-upload, but email failed: ${emailError}. Share this link manually: ${reuploadUrl}`,
         lead,
@@ -533,6 +567,23 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
         emailSent: false,
       });
     }
+
+    await logAdminActivity(
+      req.admin,
+      'REQUEST_STUDENT_REUPLOAD',
+      `Requested Study Abroad doc re-upload from student ${lead.name}`,
+      {
+        leadId: lead._id,
+        candidateName: lead.name,
+        email: lead.email,
+        subject: 'RouteUp — Please re-upload your study abroad documents',
+        requestedDocuments: documentTitles,
+        message: message || '',
+        reuploadUrl,
+        isEmail: true,
+        emailSent: true
+      }
+    );
 
     res.json({
       message: 'Re-upload email sent successfully',
@@ -591,6 +642,14 @@ router.put('/:id', protect, async (req, res) => {
     }
 
     await lead.save();
+
+    await logAdminActivity(
+      req.admin,
+      'UPDATE_STUDENT_LEAD',
+      `Updated Student Study Abroad lead for ${lead.name}`,
+      { leadId: lead._id, candidateName: lead.name, status: lead.status, applyingCourse: lead.applyingCourse }
+    );
+
     res.json(lead);
   } catch (error) {
     console.error('Update study abroad lead error:', error);
@@ -637,6 +696,13 @@ router.delete('/:id/document', protect, async (req, res) => {
       /* ignore */
     }
 
+    await logAdminActivity(
+      req.admin,
+      'DELETE_STUDENT_DOCUMENT',
+      `Deleted document "${title}" for Student lead ${lead.name}`,
+      { leadId: lead._id, candidateName: lead.name, documentTitle: title }
+    );
+
     res.json({ message: 'Document deleted successfully', lead });
   } catch (error) {
     console.error('Delete study abroad document error:', error);
@@ -656,7 +722,16 @@ router.delete('/:id', protect, async (req, res) => {
       deleteFileIfExists(doc.filePath);
     });
 
+    const studentName = lead.name;
     await lead.deleteOne();
+
+    await logAdminActivity(
+      req.admin,
+      'DELETE_STUDENT_LEAD',
+      `Deleted Student Study Abroad lead for ${studentName}`,
+      { leadId: req.params.id, candidateName: studentName }
+    );
+
     res.json({ message: 'Lead deleted' });
   } catch (error) {
     console.error('Delete study abroad lead error:', error);

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Service = require('../models/Service');
 const { protect } = require('../middleware/authMiddleware');
+const { logAdminActivity } = require('../utils/activityLogger');
 const { 
   notifyServiceCreated, 
   notifyServiceUpdated, 
@@ -47,6 +48,13 @@ router.post('/', protect, async (req, res) => {
     // Broadcast creation
     notifyServiceCreated(service);
 
+    await logAdminActivity(
+      req.admin,
+      'CREATE_SERVICE',
+      `Created advisory service: ${service.title}`,
+      { serviceId: service._id, title: service.title, key: service.key, price: service.price }
+    );
+
     res.status(201).json(service);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -83,6 +91,13 @@ router.put('/:id', protect, async (req, res) => {
     // Broadcast update
     notifyServiceUpdated(service);
 
+    await logAdminActivity(
+      req.admin,
+      'UPDATE_SERVICE',
+      `Updated advisory service: ${service.title}`,
+      { serviceId: service._id, title: service.title, key: service.key, price: service.price }
+    );
+
     res.json(service);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -103,6 +118,13 @@ router.delete('/:id', protect, async (req, res) => {
 
     // Broadcast deletion
     notifyServiceDeleted(req.params.id);
+
+    await logAdminActivity(
+      req.admin,
+      'DELETE_SERVICE',
+      `Deleted advisory service: ${service.title}`,
+      { serviceId: service._id, title: service.title, key: service.key }
+    );
 
     res.json({ message: 'Service removed successfully' });
   } catch (error) {

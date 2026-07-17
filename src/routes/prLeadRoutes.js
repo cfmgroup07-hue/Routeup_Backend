@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const AustraliaPRLead = require('../models/AustraliaPRLead');
 const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
+const { logAdminActivity } = require('../utils/activityLogger');
 
 const uploadDir = path.join(__dirname, '../../uploads/pr-docs');
 if (!fs.existsSync(uploadDir)) {
@@ -263,6 +264,14 @@ router.put('/:id', protect, async (req, res) => {
     }
 
     await lead.save();
+
+    await logAdminActivity(
+      req.admin,
+      'UPDATE_PR_LEAD',
+      `Updated Australia PR lead for ${lead.name}`,
+      { leadId: lead._id, candidateName: lead.name, status: lead.status, occupation: lead.occupation }
+    );
+
     res.json(lead);
   } catch (error) {
     res.status(500).json({ message: 'Failed to update PR lead' });
@@ -345,6 +354,21 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
       attachments,
     });
 
+    await logAdminActivity(
+      req.admin,
+      'SEND_PR_EMAIL',
+      `Sent email to Australia PR candidate ${lead.name}`,
+      {
+        leadId: lead._id,
+        candidateName: lead.name,
+        email: lead.email,
+        subject: subject.trim(),
+        message: notes || '',
+        attachments: (req.files || []).map(f => f.originalname),
+        isEmail: true
+      }
+    );
+
     res.json({ message: 'Email sent successfully!', lead });
   } catch (error) {
     console.error('PR lead email error:', error);
@@ -399,6 +423,13 @@ router.delete('/:id/document', protect, async (req, res) => {
       /* ignore */
     }
 
+    await logAdminActivity(
+      req.admin,
+      'DELETE_PR_DOCUMENT',
+      `Deleted document "${title}" for Australia PR lead ${lead.name}`,
+      { leadId: lead._id, candidateName: lead.name, documentTitle: title }
+    );
+
     res.json({ message: 'Document deleted successfully', lead });
   } catch (error) {
     console.error('Delete PR document error:', error);
@@ -426,7 +457,16 @@ router.delete('/:id', protect, async (req, res) => {
       }
     });
 
+    const candidateName = lead.name;
     await lead.deleteOne();
+
+    await logAdminActivity(
+      req.admin,
+      'DELETE_PR_LEAD',
+      `Deleted Australia PR lead for ${candidateName}`,
+      { leadId: req.params.id, candidateName }
+    );
+
     res.json({ message: 'Lead deleted', id: req.params.id });
   } catch (error) {
     res.status(500).json({ message: 'Failed to delete PR lead' });
@@ -713,6 +753,24 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
     }
 
     if (!emailSent) {
+      await logAdminActivity(
+        req.admin,
+        'REQUEST_PR_REUPLOAD',
+        `Requested PR document re-upload from candidate ${lead.name} (Email failed)`,
+        {
+          leadId: lead._id,
+          candidateName: lead.name,
+          email: lead.email,
+          subject: 'RouteUp — Please re-upload your Australia PR documents',
+          requestedDocuments: documentTitles,
+          message: message || '',
+          reuploadUrl,
+          isEmail: true,
+          emailSent: false,
+          emailError
+        }
+      );
+
       return res.status(502).json({
         message: `Documents marked for re-upload, but email failed: ${emailError}. Share this link manually: ${reuploadUrl}`,
         lead,
@@ -720,6 +778,23 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
         emailSent: false,
       });
     }
+
+    await logAdminActivity(
+      req.admin,
+      'REQUEST_PR_REUPLOAD',
+      `Requested PR document re-upload from candidate ${lead.name}`,
+      {
+        leadId: lead._id,
+        candidateName: lead.name,
+        email: lead.email,
+        subject: 'RouteUp — Please re-upload your Australia PR documents',
+        requestedDocuments: documentTitles,
+        message: message || '',
+        reuploadUrl,
+        isEmail: true,
+        emailSent: true
+      }
+    );
 
     res.json({
       message: 'Re-upload email sent successfully',

@@ -3,6 +3,7 @@ const router = express.Router();
 const VisaPathway = require('../models/VisaPathway');
 const { resolveCountryFlag } = require('../utils/countryFlags');
 const { protect } = require('../middleware/authMiddleware');
+const { logAdminActivity } = require('../utils/activityLogger');
 const { 
   notifyVisaPathwayCreated, 
   notifyVisaPathwayUpdated, 
@@ -56,6 +57,13 @@ router.post('/', protect, async (req, res) => {
     // Broadcast creation
     notifyVisaPathwayCreated(pathway);
 
+    await logAdminActivity(
+      req.admin,
+      'CREATE_VISA_PATHWAY',
+      `Created visa pathway for country: ${pathway.countryName}`,
+      { pathwayId: pathway._id, countryName: pathway.countryName, visaTypes: pathway.visaTypes }
+    );
+
     res.status(201).json(pathway);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -93,6 +101,13 @@ router.put('/:id', protect, async (req, res) => {
     // Broadcast update
     notifyVisaPathwayUpdated(pathway);
 
+    await logAdminActivity(
+      req.admin,
+      'UPDATE_VISA_PATHWAY',
+      `Updated visa pathway for country: ${pathway.countryName}`,
+      { pathwayId: pathway._id, countryName: pathway.countryName, visaTypes: pathway.visaTypes }
+    );
+
     res.json(pathway);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -113,6 +128,13 @@ router.delete('/:id', protect, async (req, res) => {
 
     // Broadcast deletion
     notifyVisaPathwayDeleted(req.params.id);
+
+    await logAdminActivity(
+      req.admin,
+      'DELETE_VISA_PATHWAY',
+      `Deleted visa pathway for country: ${pathway.countryName}`,
+      { pathwayId: pathway._id, countryName: pathway.countryName }
+    );
 
     res.json({ message: 'Visa pathway removed successfully' });
   } catch (error) {
