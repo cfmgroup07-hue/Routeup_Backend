@@ -58,8 +58,18 @@ const AustraliaPRLeadSchema = new mongoose.Schema(
         title: { type: String, required: true },
         fileName: { type: String, default: '' },
         filePath: { type: String, default: '' },
+        needsReupload: { type: Boolean, default: false },
+        reuploadNote: { type: String, default: '' },
       },
     ],
+    reuploadToken: {
+      type: String,
+      default: '',
+      index: true,
+    },
+    reuploadExpiresAt: {
+      type: Date,
+    },
     status: {
       type: String,
       enum: ['New', 'Contacted', 'Converted', 'Closed'],
@@ -81,6 +91,10 @@ const AustraliaPRLeadSchema = new mongoose.Schema(
     paymentId: {
       type: String,
       default: '',
+    },
+    applicationDetails: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
     },
   },
   { timestamps: true }

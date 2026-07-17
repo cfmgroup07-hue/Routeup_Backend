@@ -34,6 +34,30 @@ const upload = multer({
   },
 });
 
+const mailUploadDir = path.join(__dirname, '../../uploads/study-abroad-mail');
+if (!fs.existsSync(mailUploadDir)) {
+  fs.mkdirSync(mailUploadDir, { recursive: true });
+}
+
+const mailStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, mailUploadDir),
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, `mail-${uniqueSuffix}${path.extname(file.originalname)}`);
+  },
+});
+
+const mailUpload = multer({
+  storage: mailStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowed = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp'];
+    if (allowed.includes(ext)) cb(null, true);
+    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
+  },
+});
+
 const escapeHtml = (value = '') =>
   String(value)
     .replace(/&/g, '&amp;')
@@ -287,6 +311,89 @@ router.get('/', protect, async (req, res) => {
   } catch (error) {
     console.error('Get study abroad leads error:', error);
     res.status(500).json({ message: 'Failed to fetch study abroad leads' });
+  }
+});
+
+// @desc    Send follow-up email to study abroad student
+// @route   POST /api/study-abroad-leads/:id/send-email
+// @access  Private
+router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async (req, res) => {
+  try {
+    const lead = await StudyAbroadLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const { notes, subject } = req.body;
+
+    if (!subject?.trim()) {
+      return res.status(400).json({ message: 'Email subject is required.' });
+    }
+
+    if (!notes?.trim() && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ message: 'Please add a message or upload at least one attachment.' });
+    }
+
+    if (notes?.trim()) {
+      lead.adminNotes = notes.trim();
+    }
+    if (lead.status === 'New') {
+      lead.status = 'Contacted';
+    }
+    await lead.save();
+
+    const formattedNotes = (notes || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br/>');
+
+    const attachmentListHtml = (req.files || []).length > 0
+      ? `<ul style="margin: 0; padding-left: 20px;">${req.files.map((file) => `<li style="margin-bottom: 6px;">${escapeHtml(file.originalname)}</li>`).join('')}</ul>`
+      : '';
+
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+        <div style="background-color: #0d7c3d; color: #fff; padding: 15px; text-align: center;">
+          <h2 style="margin: 0; font-size: 22px;">RouteUp — Study Abroad Follow-Up</h2>
+        </div>
+        <div style="padding: 30px;">
+          <p style="font-size: 16px;">Hello <strong>${escapeHtml(lead.name)}</strong>,</p>
+          ${formattedNotes
+            ? `<div style="font-size: 16px; line-height: 1.7; margin: 20px 0;">${formattedNotes}</div>`
+            : '<p style="font-size: 16px; line-height: 1.5;">Please find the attached documents from our team.</p>'}
+
+          ${attachmentListHtml
+            ? `<div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; margin: 25px 0;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;"><strong>Attachments</strong></p>
+            ${attachmentListHtml}
+          </div>`
+            : ''}
+
+          <p style="font-size: 16px; line-height: 1.5;">If you have any questions, simply reply to this email and our team will assist you.</p>
+
+          <p style="font-size: 16px; margin-top: 30px;">Best regards,<br/><strong>The RouteUp Team</strong></p>
+        </div>
+        <div style="background-color: #f1f5f9; padding: 15px; text-align: center; font-size: 12px; color: #64748b;">
+          &copy; ${new Date().getFullYear()} RouteUp. All rights reserved.
+        </div>
+      </div>
+    `;
+
+    const attachments = (req.files || []).map((file) => ({
+      filename: file.originalname,
+      path: path.join(mailUploadDir, file.filename),
+    }));
+
+    await sendEmail({
+      to: lead.email,
+      subject: subject.trim(),
+      htmlContent: emailHtml,
+      attachments,
+    });
+
+    res.json({ message: 'Email sent successfully!', lead });
+  } catch (error) {
+    console.error('Study abroad follow-up email error:', error);
+    res.status(500).json({ message: error.message || 'Failed to send email' });
   }
 });
 

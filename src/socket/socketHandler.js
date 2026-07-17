@@ -80,6 +80,13 @@ const emitStudyAbroadLeadUpdated = (lead) => {
   }
 };
 
+const emitAustraliaPrLeadUpdated = (lead) => {
+  if (io) {
+    io.to('admin_room').emit('australia_pr_lead_updated', lead);
+    console.log(`Socket event emitted: australia_pr_lead_updated for ID ${lead._id}`);
+  }
+};
+
 const emitNewNotification = (notification) => {
   if (io) {
     io.to('admin_room').emit('new_notification', notification);
@@ -98,6 +105,7 @@ module.exports = {
   notifyVisaPathwayUpdated,
   notifyVisaPathwayDeleted,
   emitStudyAbroadLeadUpdated,
+  emitAustraliaPrLeadUpdated,
   emitNewNotification,
 };
 
