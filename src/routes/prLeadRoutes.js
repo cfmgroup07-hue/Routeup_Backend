@@ -5,9 +5,22 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const AustraliaPRLead = require('../models/AustraliaPRLead');
+const Notification = require('../models/Notification');
 const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
 const { logAdminActivity } = require('../utils/activityLogger');
+const socketHandler = require('../socket/socketHandler');
+const { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl, isLocalUploadPath, assertCloudinaryDocumentPaths, getDocumentViewUrl, getDocumentDownloadUrl, isPdfCloudinaryUrl } = require('../utils/cloudinary');
+const { resolveStoredFileUrl } = require('../utils/resolveFileUrl');
+
+const storeFileOnCloudinary = async (filePath, folder) => {
+  const secureUrl = await uploadToCloudinary(filePath, folder);
+  if (!isCloudinaryUrl(secureUrl)) {
+    throw new Error('Uploaded file must be stored on Cloudinary');
+  }
+  return secureUrl;
+};
+
 
 const uploadDir = path.join(__dirname, '../../uploads/pr-docs');
 if (!fs.existsSync(uploadDir)) {
@@ -32,9 +45,8 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per file
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.webp'];
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
+    if (ext === '.pdf') cb(null, true);
+    else cb(new Error('Only PDF (.pdf) files are allowed'));
   },
 });
 
@@ -51,9 +63,8 @@ const mailUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp'];
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
+    if (ext === '.pdf') cb(null, true);
+    else cb(new Error('Only PDF (.pdf) files are allowed'));
   },
 });
 
@@ -143,7 +154,10 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
 
     const files = req.files || [];
     let fileIdx = 0;
-    const uploadedDocuments = (Array.isArray(metaList) ? metaList : []).map((item) => {
+    const uploadedDocuments = [];
+
+    const itemsList = Array.isArray(metaList) ? metaList : [];
+    for (const item of itemsList) {
       const doc = {
         title: item.title || 'Document',
         fileName: item.fileName || '',
@@ -152,19 +166,21 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
       if (item.attached && files[fileIdx]) {
         const file = files[fileIdx++];
         doc.fileName = file.originalname;
-        doc.filePath = `/uploads/pr-docs/${file.filename}`;
+        doc.filePath = await storeFileOnCloudinary(file.path, 'pr-docs');
       }
-      return doc;
-    });
+      uploadedDocuments.push(doc);
+    }
 
     while (fileIdx < files.length) {
       const file = files[fileIdx++];
+      const secureUrl = await storeFileOnCloudinary(file.path, 'pr-docs');
       uploadedDocuments.push({
         title: 'Uploaded document',
         fileName: file.originalname,
-        filePath: `/uploads/pr-docs/${file.filename}`,
+        filePath: secureUrl,
       });
     }
+
 
     let parsedApplicationDetails = {};
     if (applicationDetails) {
@@ -177,6 +193,10 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
         parsedApplicationDetails = {};
       }
     }
+
+    assertCloudinaryDocumentPaths(
+      uploadedDocuments.filter((doc) => doc.filePath)
+    );
 
     const lead = await AustraliaPRLead.create({
       name: name.trim(),
@@ -197,6 +217,20 @@ router.post('/', upload.array('documents', 30), async (req, res) => {
       applicationDetails: parsedApplicationDetails,
     });
 
+    try {
+      const notification = await Notification.create({
+        title: 'New Australia PR Lead',
+        message: `${lead.name} submitted an Australia PR enquiry (${lead.occupation}).`,
+        type: 'new_lead',
+        link: 'australia-pr',
+        isRead: false,
+      });
+      socketHandler.emitNewNotification(notification);
+      socketHandler.emitNewAustraliaPrLead(lead);
+    } catch (socketErr) {
+      console.error('Failed to emit new PR lead socket event:', socketErr);
+    }
+
     res.status(201).json(lead);
   } catch (error) {
     console.error('Create PR lead error:', error);
@@ -214,6 +248,58 @@ router.get('/', protect, async (req, res) => {
   } catch (error) {
     console.error('Get PR leads error:', error);
     res.status(500).json({ message: 'Failed to fetch PR leads' });
+  }
+});
+
+// @desc    Resolve a document URL (Cloudinary). Migrates legacy /uploads paths when possible.
+// @route   GET /api/pr-leads/:id/document-url
+// @access  Private
+router.get('/:id/document-url', protect, async (req, res) => {
+  let lead;
+  let doc;
+  try {
+    const { title } = req.query;
+    if (!title) {
+      return res.status(400).json({ message: 'Document title is required' });
+    }
+
+    lead = await AustraliaPRLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    doc = (lead.uploadedDocuments || []).find((d) => d.title === title);
+    if (!doc?.filePath) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    const url = await resolveStoredFileUrl(doc.filePath, 'pr-docs');
+    if (url !== doc.filePath) {
+      doc.filePath = url;
+      lead.markModified('uploadedDocuments');
+      await lead.save();
+      socketHandler.emitAustraliaPrLeadUpdated(lead);
+    }
+
+    return res.json({
+      url: doc.filePath,
+      viewUrl: getDocumentViewUrl(doc.filePath),
+      downloadUrl: getDocumentDownloadUrl(doc.filePath),
+      isPdf: isPdfCloudinaryUrl(doc.filePath),
+    });
+  } catch (error) {
+    console.error('Resolve PR document URL error:', error);
+
+    if (lead && doc && isLocalUploadPath(doc.filePath)) {
+      doc.needsReupload = true;
+      doc.reuploadNote =
+        doc.reuploadNote ||
+        'Original file could not be found. Please upload this document again.';
+      doc.filePath = '';
+      lead.markModified('uploadedDocuments');
+      await lead.save();
+      socketHandler.emitAustraliaPrLeadUpdated(lead);
+    }
+
+    return res.status(404).json({ message: error.message || 'Document unavailable' });
   }
 });
 
@@ -271,6 +357,8 @@ router.put('/:id', protect, async (req, res) => {
       `Updated Australia PR lead for ${lead.name}`,
       { leadId: lead._id, candidateName: lead.name, status: lead.status, occupation: lead.occupation }
     );
+
+    socketHandler.emitAustraliaPrLeadUpdated(lead);
 
     res.json(lead);
   } catch (error) {
@@ -342,10 +430,19 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
       </div>
     `;
 
-    const attachments = (req.files || []).map((file) => ({
+    const uploadedPaths = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const secureUrl = await storeFileOnCloudinary(file.path, 'pr-mail');
+        uploadedPaths.push(secureUrl);
+      }
+    }
+
+    const attachments = (req.files || []).map((file, index) => ({
       filename: file.originalname,
-      path: path.join(mailUploadDir, file.filename),
+      path: uploadedPaths[index],
     }));
+
 
     await sendEmail({
       to: lead.email,
@@ -368,6 +465,8 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
         isEmail: true
       }
     );
+
+    socketHandler.emitAustraliaPrLeadUpdated(lead);
 
     res.json({ message: 'Email sent successfully!', lead });
   } catch (error) {
@@ -396,15 +495,20 @@ router.delete('/:id/document', protect, async (req, res) => {
 
     const doc = lead.uploadedDocuments[docIndex];
     if (doc.filePath) {
-      const abs = path.join(__dirname, '../..', doc.filePath.replace(/^\//, ''));
-      if (fs.existsSync(abs)) {
-        try {
-          fs.unlinkSync(abs);
-        } catch (err) {
-          console.error('Failed to delete PR doc file:', err.message);
+      if (doc.filePath.includes('cloudinary.com')) {
+        await deleteFromCloudinary(doc.filePath);
+      } else {
+        const abs = path.join(__dirname, '../..', doc.filePath.replace(/^\//, ''));
+        if (fs.existsSync(abs)) {
+          try {
+            fs.unlinkSync(abs);
+          } catch (err) {
+            console.error('Failed to delete PR doc file:', err.message);
+          }
         }
       }
     }
+
 
     if (doc.needsReupload) {
       doc.fileName = '';
@@ -416,12 +520,7 @@ router.delete('/:id/document', protect, async (req, res) => {
     lead.markModified('uploadedDocuments');
     await lead.save();
 
-    const socketHandler = require('../socket/socketHandler');
-    try {
-      socketHandler.emitAustraliaPrLeadUpdated(lead);
-    } catch {
-      /* ignore */
-    }
+    socketHandler.emitAustraliaPrLeadUpdated(lead);
 
     await logAdminActivity(
       req.admin,
@@ -458,16 +557,19 @@ router.delete('/:id', protect, async (req, res) => {
     });
 
     const candidateName = lead.name;
+    const leadId = lead._id.toString();
     await lead.deleteOne();
 
     await logAdminActivity(
       req.admin,
       'DELETE_PR_LEAD',
       `Deleted Australia PR lead for ${candidateName}`,
-      { leadId: req.params.id, candidateName }
+      { leadId, candidateName }
     );
 
-    res.json({ message: 'Lead deleted', id: req.params.id });
+    socketHandler.emitAustraliaPrLeadDeleted(leadId);
+
+    res.json({ message: 'Lead deleted', id: leadId });
   } catch (error) {
     res.status(500).json({ message: 'Failed to delete PR lead' });
   }
@@ -548,14 +650,18 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
       (lead.uploadedDocuments || []).filter((d) => d.needsReupload).map((d) => d.title)
     );
 
-    const deleteFileIfExists = (filePath) => {
+    const deleteFileIfExists = async (filePath) => {
       if (!filePath) return;
-      const fullPath = path.join(__dirname, '../..', filePath.replace(/^\//, ''));
-      if (fs.existsSync(fullPath)) {
-        try {
-          fs.unlinkSync(fullPath);
-        } catch {
-          /* ignore */
+      if (filePath.includes('cloudinary.com')) {
+        await deleteFromCloudinary(filePath);
+      } else {
+        const fullPath = path.join(__dirname, '../..', filePath.replace(/^\//, ''));
+        if (fs.existsSync(fullPath)) {
+          try {
+            fs.unlinkSync(fullPath);
+          } catch {
+            /* ignore */
+          }
         }
       }
     };
@@ -570,12 +676,13 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
       const doc = lead.uploadedDocuments.find((d) => d.title === item.title);
       if (!doc) continue;
 
-      deleteFileIfExists(doc.filePath);
+      await deleteFileIfExists(doc.filePath);
       doc.fileName = file.originalname;
-      doc.filePath = `/uploads/pr-docs/${file.filename}`;
+      doc.filePath = await storeFileOnCloudinary(file.path, 'pr-docs');
       doc.needsReupload = false;
       doc.reuploadNote = '';
     }
+
 
     const stillPending = (lead.uploadedDocuments || []).some((d) => d.needsReupload);
     if (!stillPending) {
@@ -590,8 +697,6 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
     await lead.save();
 
     // Create and save notification for the admin
-    const Notification = require('../models/Notification');
-    const socketHandler = require('../socket/socketHandler');
     try {
       const notification = await Notification.create({
         title: 'PR Documents Re-uploaded',
@@ -605,11 +710,7 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
       console.error('Failed to create/emit notification:', notifErr);
     }
 
-    try {
-      socketHandler.emitAustraliaPrLeadUpdated(lead);
-    } catch {
-      /* ignore */
-    }
+    socketHandler.emitAustraliaPrLeadUpdated(lead);
 
     res.json({
       message: stillPending
@@ -745,12 +846,7 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
       console.error('Re-upload email failed:', err);
     }
 
-    const socketHandler = require('../socket/socketHandler');
-    try {
-      socketHandler.emitAustraliaPrLeadUpdated(lead);
-    } catch {
-      /* ignore */
-    }
+    socketHandler.emitAustraliaPrLeadUpdated(lead);
 
     if (!emailSent) {
       await logAdminActivity(

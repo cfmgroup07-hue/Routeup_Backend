@@ -6,6 +6,8 @@ const cors = require('cors');
 const path = require('path');
 const connectDB = require('./config/db');
 const socketHandler = require('./socket/socketHandler');
+const { printStartupReport } = require('./utils/startupLogger');
+const { migrateLocalUploadsToCloudinary } = require('./utils/migrateLocalUploads');
 const Admin = require('./models/Admin');
 const Service = require('./models/Service');
 const VisaPathway = require('./models/VisaPathway');
@@ -48,8 +50,27 @@ const io = socketIo(server, {
   }
 });
 
-// Connect Database
-connectDB();
+// Connect Database & start server
+const startServer = async () => {
+  await connectDB();
+  await seedData();
+  await migrateLocalUploadsToCloudinary();
+
+  socketHandler.init(io);
+
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`[HTTP Server] port ${PORT} is already in use`);
+    } else {
+      console.error(`[HTTP Server] failed to start → ${error.message}`);
+    }
+    process.exit(1);
+  });
+
+  server.listen(PORT, async () => {
+    await printStartupReport({ port: PORT, allowedOrigins, io });
+  });
+};
 
 // Seed Default Data
 const seedData = async () => {
@@ -63,7 +84,7 @@ const seedData = async () => {
         password: 'Admin@123',
         role: 'admin'
       });
-      console.log('Admin user seeded successfully: admin@gmail.com / Admin@123');
+      console.log('[Seed] Admin user seeded: admin@gmail.com');
     } else {
       let adminModified = false;
       if (!adminExists.name) {
@@ -77,7 +98,7 @@ const seedData = async () => {
       if (adminModified) {
         await adminExists.save();
       }
-      console.log('Admin user already exists in database');
+      console.log('[Seed] Admin user already exists');
     }
 
     // Seed Super Admin User
@@ -89,7 +110,7 @@ const seedData = async () => {
         password: 'Superadmin@123',
         role: 'superadmin'
       });
-      console.log('Super Admin user seeded successfully: superadmin@gmail.com / Superadmin@123');
+      console.log('[Seed] Super Admin user seeded: superadmin@gmail.com');
     } else {
       let superModified = false;
       if (superAdminExists.role !== 'superadmin') {
@@ -99,13 +120,13 @@ const seedData = async () => {
       if (superModified) {
         await superAdminExists.save();
       }
-      console.log('Super Admin user already exists in database');
+      console.log('[Seed] Super Admin user already exists');
     }
 
     // Seed Services
     const serviceWithNoKey = await Service.findOne({ key: { $exists: false } });
     if (serviceWithNoKey) {
-      console.log('Detected old service schema. Clearing services...');
+      console.log('[Seed] Cleared old service schema');
       await Service.deleteMany({});
     }
 
@@ -134,13 +155,13 @@ const seedData = async () => {
           icon: '💼'
         }
       ]);
-      console.log('Default services seeded successfully');
+      console.log('[Seed] Default services seeded');
     }
 
     // Seed Visa Pathways
     const pathwayWithNoCountry = await VisaPathway.findOne({ countryName: { $exists: false } });
     if (pathwayWithNoCountry) {
-      console.log('Detected old visa pathway schema. Clearing pathways...');
+      console.log('[Seed] Cleared old visa pathway schema');
       await VisaPathway.deleteMany({});
     }
 
@@ -190,13 +211,12 @@ const seedData = async () => {
           docBadgeText: 'Detailed visa document provided'
         }
       ]);
-      console.log('Default visa pathways seeded successfully');
+      console.log('[Seed] Default visa pathways seeded');
     }
   } catch (error) {
-    console.error('Error seeding database:', error);
+    console.error('[Seed] Error seeding database:', error.message);
   }
 };
-seedData();
 
 // Middleware
 app.use(cors({ origin: corsOrigin, credentials: true }));
@@ -205,9 +225,6 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // Serve Uploaded Files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-
-// Socket.io Handler
-socketHandler.init(io);
 
 // Define Routes
 app.use('/api/auth', require('./routes/authRoutes'));
@@ -234,7 +251,7 @@ app.use((err, req, res, next) => {
 // Port configuration
 const PORT = process.env.PORT || 5000;
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+startServer().catch((error) => {
+  console.error('[Startup] Fatal error:', error.message);
+  process.exit(1);
 });

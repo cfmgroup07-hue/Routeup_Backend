@@ -8,6 +8,16 @@ const Admin = require('../models/Admin');
 const ActivityLog = require('../models/ActivityLog');
 const { logAdminActivity } = require('../utils/activityLogger');
 const { protect } = require('../middleware/authMiddleware');
+const { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl } = require('../utils/cloudinary');
+
+const storeFileOnCloudinary = async (filePath, folder) => {
+  const secureUrl = await uploadToCloudinary(filePath, folder);
+  if (!isCloudinaryUrl(secureUrl)) {
+    throw new Error('Uploaded file must be stored on Cloudinary');
+  }
+  return secureUrl;
+};
+
 
 const avatarDir = path.join(__dirname, '../../uploads/admin-avatars');
 if (!fs.existsSync(avatarDir)) {
@@ -33,17 +43,22 @@ const avatarUpload = multer({
   },
 });
 
-const deleteAvatarIfExists = (filePath) => {
+const deleteAvatarIfExists = async (filePath) => {
   if (!filePath) return;
-  const fullPath = path.join(__dirname, '../..', filePath.replace(/^\//, ''));
-  if (fs.existsSync(fullPath)) {
-    try {
-      fs.unlinkSync(fullPath);
-    } catch {
-      /* ignore */
+  if (filePath.includes('cloudinary.com')) {
+    await deleteFromCloudinary(filePath);
+  } else {
+    const fullPath = path.join(__dirname, '../..', filePath.replace(/^\//, ''));
+    if (fs.existsSync(fullPath)) {
+      try {
+        fs.unlinkSync(fullPath);
+      } catch {
+        /* ignore */
+      }
     }
   }
 };
+
 
 const signToken = (id) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -133,12 +148,13 @@ router.put('/profile', protect, (req, res) => {
       }
 
       if (req.file) {
-        deleteAvatarIfExists(admin.avatar);
-        admin.avatar = `/uploads/admin-avatars/${req.file.filename}`;
+        await deleteAvatarIfExists(admin.avatar);
+        admin.avatar = await storeFileOnCloudinary(req.file.path, 'admin-avatars');
       } else if (removeAvatar === 'true' || removeAvatar === true) {
-        deleteAvatarIfExists(admin.avatar);
+        await deleteAvatarIfExists(admin.avatar);
         admin.avatar = '';
       }
+
 
       await admin.save();
       await logAdminActivity(

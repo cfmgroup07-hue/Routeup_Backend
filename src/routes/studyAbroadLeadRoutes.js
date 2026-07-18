@@ -10,6 +10,17 @@ const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
 const { logAdminActivity } = require('../utils/activityLogger');
 const socketHandler = require('../socket/socketHandler');
+const { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl, isLocalUploadPath, assertCloudinaryDocumentPaths, getDocumentViewUrl, getDocumentDownloadUrl, isPdfCloudinaryUrl } = require('../utils/cloudinary');
+const { resolveStoredFileUrl } = require('../utils/resolveFileUrl');
+
+const storeFileOnCloudinary = async (filePath, folder) => {
+  const secureUrl = await uploadToCloudinary(filePath, folder);
+  if (!isCloudinaryUrl(secureUrl)) {
+    throw new Error('Uploaded file must be stored on Cloudinary');
+  }
+  return secureUrl;
+};
+
 
 const uploadDir = path.join(__dirname, '../../uploads/study-abroad-docs');
 if (!fs.existsSync(uploadDir)) {
@@ -29,9 +40,8 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.webp'];
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
+    if (ext === '.pdf') cb(null, true);
+    else cb(new Error('Only PDF (.pdf) files are allowed'));
   },
 });
 
@@ -53,9 +63,8 @@ const mailUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp'];
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('Only PDF, DOC, DOCX, and image files are allowed'));
+    if (ext === '.pdf') cb(null, true);
+    else cb(new Error('Only PDF (.pdf) files are allowed'));
   },
 });
 
@@ -71,17 +80,22 @@ const resolveUploadPath = (filePath = '') => {
   return path.join(__dirname, '../..', relative);
 };
 
-const deleteFileIfExists = (filePath) => {
+const deleteFileIfExists = async (filePath) => {
   if (!filePath) return;
-  const fullPath = resolveUploadPath(filePath);
-  if (fs.existsSync(fullPath)) {
-    try {
-      fs.unlinkSync(fullPath);
-    } catch {
-      /* ignore */
+  if (filePath.includes('cloudinary.com')) {
+    await deleteFromCloudinary(filePath);
+  } else {
+    const fullPath = resolveUploadPath(filePath);
+    if (fs.existsSync(fullPath)) {
+      try {
+        fs.unlinkSync(fullPath);
+      } catch {
+        /* ignore */
+      }
     }
   }
 };
+
 
 // @desc    Submit study abroad lead (public)
 // @route   POST /api/study-abroad-leads
@@ -116,7 +130,10 @@ router.post('/', upload.array('documents', 40), async (req, res) => {
 
     const files = req.files || [];
     let fileIdx = 0;
-    const uploadedDocuments = (Array.isArray(metaList) ? metaList : []).map((item) => {
+    const uploadedDocuments = [];
+
+    const itemsList = Array.isArray(metaList) ? metaList : [];
+    for (const item of itemsList) {
       const doc = {
         title: item.title || 'Document',
         fileName: item.fileName || '',
@@ -127,21 +144,27 @@ router.post('/', upload.array('documents', 40), async (req, res) => {
       if (item.attached && files[fileIdx]) {
         const file = files[fileIdx++];
         doc.fileName = file.originalname;
-        doc.filePath = `/uploads/study-abroad-docs/${file.filename}`;
+        doc.filePath = await storeFileOnCloudinary(file.path, 'study-abroad-docs');
       }
-      return doc;
-    });
+      uploadedDocuments.push(doc);
+    }
 
     while (fileIdx < files.length) {
       const file = files[fileIdx++];
+      const secureUrl = await storeFileOnCloudinary(file.path, 'study-abroad-docs');
       uploadedDocuments.push({
         title: 'Uploaded document',
         fileName: file.originalname,
-        filePath: `/uploads/study-abroad-docs/${file.filename}`,
+        filePath: secureUrl,
         needsReupload: false,
         reuploadNote: '',
       });
     }
+
+
+    assertCloudinaryDocumentPaths(
+      uploadedDocuments.filter((doc) => doc.filePath)
+    );
 
     const lead = await StudyAbroadLead.create({
       name: name.trim(),
@@ -153,6 +176,20 @@ router.post('/', upload.array('documents', 40), async (req, res) => {
       uploadedDocuments,
       totalRequired: Number(totalRequired) || uploadedDocuments.length,
     });
+
+    try {
+      const notification = await Notification.create({
+        title: 'New Study Abroad Lead',
+        message: `${lead.name} submitted study abroad documents for ${lead.applyingCourse} (${lead.country}).`,
+        type: 'new_lead',
+        link: 'students',
+        isRead: false,
+      });
+      socketHandler.emitNewNotification(notification);
+      socketHandler.emitNewStudyAbroadLead(lead);
+    } catch (socketErr) {
+      console.error('Failed to emit new study abroad lead socket event:', socketErr);
+    }
 
     res.status(201).json(lead);
   } catch (error) {
@@ -248,11 +285,12 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
       const doc = lead.uploadedDocuments.find((d) => d.title === item.title);
       if (!doc) continue;
 
-      deleteFileIfExists(doc.filePath);
+      await deleteFileIfExists(doc.filePath);
       doc.fileName = file.originalname;
-      doc.filePath = `/uploads/study-abroad-docs/${file.filename}`;
+      doc.filePath = await storeFileOnCloudinary(file.path, 'study-abroad-docs');
       doc.needsReupload = false;
       doc.reuploadNote = '';
+
     }
 
     const stillPending = (lead.uploadedDocuments || []).some((d) => d.needsReupload);
@@ -264,6 +302,10 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
     if (lead.status === 'New') {
       lead.status = 'Contacted';
     }
+
+    assertCloudinaryDocumentPaths(
+      (lead.uploadedDocuments || []).filter((doc) => doc.filePath)
+    );
 
     await lead.save();
 
@@ -379,10 +421,19 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
       </div>
     `;
 
-    const attachments = (req.files || []).map((file) => ({
+    const uploadedPaths = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const secureUrl = await storeFileOnCloudinary(file.path, 'study-abroad-mail');
+        uploadedPaths.push(secureUrl);
+      }
+    }
+
+    const attachments = (req.files || []).map((file, index) => ({
       filename: file.originalname,
-      path: path.join(mailUploadDir, file.filename),
+      path: uploadedPaths[index],
     }));
+
 
     await sendEmail({
       to: lead.email,
@@ -405,6 +456,8 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
         isEmail: true
       }
     );
+
+    socketHandler.emitStudyAbroadLeadUpdated(lead);
 
     res.json({ message: 'Email sent successfully!', lead });
   } catch (error) {
@@ -599,7 +652,59 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
   }
 });
 
-// @desc    Get single lead
+// @desc    Resolve a document URL (Cloudinary). Migrates legacy /uploads paths when possible.
+// @route   GET /api/study-abroad-leads/:id/document-url
+// @access  Private
+router.get('/:id/document-url', protect, async (req, res) => {
+  let lead;
+  let doc;
+  try {
+    const { title } = req.query;
+    if (!title) {
+      return res.status(400).json({ message: 'Document title is required' });
+    }
+
+    lead = await StudyAbroadLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    doc = (lead.uploadedDocuments || []).find((d) => d.title === title);
+    if (!doc?.filePath) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    const url = await resolveStoredFileUrl(doc.filePath, 'study-abroad-docs');
+    if (url !== doc.filePath) {
+      doc.filePath = url;
+      lead.markModified('uploadedDocuments');
+      await lead.save();
+      socketHandler.emitStudyAbroadLeadUpdated(lead);
+    }
+
+    return res.json({
+      url: doc.filePath,
+      viewUrl: getDocumentViewUrl(doc.filePath),
+      downloadUrl: getDocumentDownloadUrl(doc.filePath),
+      isPdf: isPdfCloudinaryUrl(doc.filePath),
+    });
+  } catch (error) {
+    console.error('Resolve study abroad document URL error:', error);
+
+    if (lead && doc && isLocalUploadPath(doc.filePath)) {
+      doc.needsReupload = true;
+      doc.reuploadNote =
+        doc.reuploadNote ||
+        'Original file could not be found. Please upload this document again.';
+      doc.filePath = '';
+      lead.markModified('uploadedDocuments');
+      await lead.save();
+      socketHandler.emitStudyAbroadLeadUpdated(lead);
+    }
+
+    return res.status(404).json({ message: error.message || 'Document unavailable' });
+  }
+});
+
+// @desc    Get single study abroad lead
 // @route   GET /api/study-abroad-leads/:id
 // @access  Private
 router.get('/:id', protect, async (req, res) => {
@@ -650,6 +755,8 @@ router.put('/:id', protect, async (req, res) => {
       { leadId: lead._id, candidateName: lead.name, status: lead.status, applyingCourse: lead.applyingCourse }
     );
 
+    socketHandler.emitStudyAbroadLeadUpdated(lead);
+
     res.json(lead);
   } catch (error) {
     console.error('Update study abroad lead error:', error);
@@ -677,8 +784,9 @@ router.delete('/:id/document', protect, async (req, res) => {
 
     const doc = lead.uploadedDocuments[docIndex];
     if (doc.filePath) {
-      deleteFileIfExists(doc.filePath);
+      await deleteFileIfExists(doc.filePath);
     }
+
 
     if (doc.needsReupload) {
       doc.fileName = '';
@@ -718,21 +826,25 @@ router.delete('/:id', protect, async (req, res) => {
     const lead = await StudyAbroadLead.findById(req.params.id);
     if (!lead) return res.status(404).json({ message: 'Lead not found' });
 
-    (lead.uploadedDocuments || []).forEach((doc) => {
-      deleteFileIfExists(doc.filePath);
-    });
+    for (const doc of lead.uploadedDocuments || []) {
+      await deleteFileIfExists(doc.filePath);
+    }
+
 
     const studentName = lead.name;
+    const leadId = lead._id.toString();
     await lead.deleteOne();
 
     await logAdminActivity(
       req.admin,
       'DELETE_STUDENT_LEAD',
       `Deleted Student Study Abroad lead for ${studentName}`,
-      { leadId: req.params.id, candidateName: studentName }
+      { leadId, candidateName: studentName }
     );
 
-    res.json({ message: 'Lead deleted' });
+    socketHandler.emitStudyAbroadLeadDeleted(leadId);
+
+    res.json({ message: 'Lead deleted', id: leadId });
   } catch (error) {
     console.error('Delete study abroad lead error:', error);
     res.status(500).json({ message: 'Failed to delete lead' });

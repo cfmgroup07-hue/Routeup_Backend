@@ -10,6 +10,16 @@ const { protect } = require('../middleware/authMiddleware');
 const { notifyNewBooking, notifyBookingUpdate } = require('../socket/socketHandler');
 const { sendEmail } = require('../utils/mailer');
 const { logAdminActivity } = require('../utils/activityLogger');
+const { uploadToCloudinary, isCloudinaryUrl } = require('../utils/cloudinary');
+
+const storeFileOnCloudinary = async (filePath, folder) => {
+  const secureUrl = await uploadToCloudinary(filePath, folder);
+  if (!isCloudinaryUrl(secureUrl)) {
+    throw new Error('Uploaded file must be stored on Cloudinary');
+  }
+  return secureUrl;
+};
+
 
 // Ensure uploads folder exists
 const uploadDir = path.join(__dirname, '../../uploads');
@@ -33,13 +43,14 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
   fileFilter: function (req, file, cb) {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.pdf' || ext === '.doc' || ext === '.docx') {
+    if (ext === '.pdf') {
       cb(null, true);
     } else {
-      cb(new Error('Only .pdf, .doc and .docx files are allowed!'));
+      cb(new Error('Only PDF (.pdf) files are allowed!'));
     }
   }
 });
+
 
 // @desc    Create a new booking request
 // @route   POST /api/bookings
@@ -112,8 +123,9 @@ router.post('/', upload.single('cv'), async (req, res) => {
       },
       placementDetails: {
         preferredIndustry: placementIndustry || '',
-        cvPath: req.file ? `/uploads/${req.file.filename}` : ''
+        cvPath: req.file ? await storeFileOnCloudinary(req.file.path, 'resumes') : ''
       },
+
       notes: notes || '',
       amount: Number(amount),
       paymentStatus: 'Paid',
@@ -438,7 +450,13 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
       return res.status(400).json({ message: 'Please add session notes or upload at least one file.' });
     }
 
-    const uploadedPaths = (req.files || []).map((file) => `/uploads/${file.filename}`);
+    const uploadedPaths = [];
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const secureUrl = await storeFileOnCloudinary(file.path, 'booking-docs');
+        uploadedPaths.push(secureUrl);
+      }
+    }
     const existingPaths = booking.postMeetingDetails?.documentPaths || [];
     const documentPaths = [...existingPaths, ...uploadedPaths];
 
@@ -448,6 +466,7 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
       documentPaths
     };
     await booking.save();
+
 
     const formattedNotes = (notes || booking.postMeetingDetails.notes || '')
       .replace(/&/g, '&amp;')
@@ -488,10 +507,11 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
       </div>
     `;
 
-    const attachments = (req.files || []).map((file) => ({
+    const attachments = (req.files || []).map((file, index) => ({
       filename: file.originalname,
-      path: path.join(uploadDir, file.filename)
+      path: uploadedPaths[index]
     }));
+
 
     await sendEmail({
       to: booking.email,
