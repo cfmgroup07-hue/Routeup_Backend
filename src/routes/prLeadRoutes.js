@@ -595,7 +595,8 @@ router.get('/reupload/:token', async (req, res) => {
         occupation: lead.occupation,
         completed: true,
         documents: [],
-        message: 'All requested documents have already been re-uploaded. Thank you!',
+        message:
+          'Thank you! Your documents have been submitted successfully. Our team will review them shortly.',
       });
     }
 
@@ -685,10 +686,7 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
 
 
     const stillPending = (lead.uploadedDocuments || []).some((d) => d.needsReupload);
-    if (!stillPending) {
-      lead.reuploadToken = '';
-      lead.reuploadExpiresAt = undefined;
-    }
+    // Keep reuploadToken until expiry so the user can refresh and still see the thank-you state
 
     if (lead.status === 'New') {
       lead.status = 'Contacted';
@@ -715,9 +713,10 @@ router.post('/reupload/:token', upload.array('documents', 40), async (req, res) 
     res.json({
       message: stillPending
         ? 'Some documents updated. Remaining requested files can still be uploaded with this link.'
-        : 'All requested documents updated successfully.',
+        : 'Thank you! Your documents have been submitted successfully. Our team will review them shortly.',
       completed: !stillPending,
-      lead,
+      name: lead.name,
+      occupation: lead.occupation,
     });
   } catch (error) {
     console.error('Submit PR reupload error:', error);
@@ -750,6 +749,14 @@ router.post('/:id/request-reupload', protect, async (req, res) => {
     const note =
       message ||
       'Please upload a clearer / correct version of this document (or upload it if you have not yet).';
+
+    // Replace previous request: only currently selected docs stay flagged for the link
+    for (const doc of lead.uploadedDocuments) {
+      if (!titleSet.has(doc.title)) {
+        doc.needsReupload = false;
+        doc.reuploadNote = '';
+      }
+    }
 
     let marked = 0;
     for (const title of titleSet) {
