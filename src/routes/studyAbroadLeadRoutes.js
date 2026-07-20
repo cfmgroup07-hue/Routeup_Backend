@@ -10,8 +10,8 @@ const { protect } = require('../middleware/authMiddleware');
 const { sendEmail } = require('../utils/mailer');
 const { logAdminActivity } = require('../utils/activityLogger');
 const socketHandler = require('../socket/socketHandler');
-const { uploadToCloudinary, deleteFromCloudinary, isCloudinaryUrl, isLocalUploadPath, assertCloudinaryDocumentPaths, getDocumentViewUrl, getDocumentDownloadUrl, isPdfCloudinaryUrl } = require('../utils/cloudinary');
-const { resolveStoredFileUrl } = require('../utils/resolveFileUrl');
+const { uploadToCloudinary, deleteFromCloudinary, downloadCloudinaryAsset, isCloudinaryUrl, isLocalUploadPath, assertCloudinaryDocumentPaths, getDocumentViewUrl, getDocumentDownloadUrl, isPdfCloudinaryUrl } = require('../utils/cloudinary');
+const { resolveStoredFileUrl, resolveLocalPath } = require('../utils/resolveFileUrl');
 
 const storeFileOnCloudinary = async (filePath, folder) => {
   const secureUrl = await uploadToCloudinary(filePath, folder);
@@ -422,18 +422,21 @@ router.post('/:id/send-email', protect, mailUpload.array('documents', 10), async
     `;
 
     const uploadedPaths = [];
+    const attachments = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
+        // Read bytes before Cloudinary upload deletes the temp file.
+        // Nodemailer must NOT fetch public Cloudinary PDF URLs (account returns 401).
+        const content = fs.readFileSync(file.path);
+        attachments.push({
+          filename: file.originalname,
+          content,
+          contentType: file.mimetype || 'application/pdf',
+        });
         const secureUrl = await storeFileOnCloudinary(file.path, 'study-abroad-mail');
         uploadedPaths.push(secureUrl);
       }
     }
-
-    const attachments = (req.files || []).map((file, index) => ({
-      filename: file.originalname,
-      path: uploadedPaths[index],
-    }));
-
 
     await sendEmail({
       to: lead.email,
@@ -709,6 +712,66 @@ router.get('/:id/document-url', protect, async (req, res) => {
     }
 
     return res.status(404).json({ message: error.message || 'Document unavailable' });
+  }
+});
+
+// @desc    Download a document (proxied — works when public Cloudinary PDF delivery is blocked)
+// @route   GET /api/study-abroad-leads/:id/document-download
+// @access  Private
+router.get('/:id/document-download', protect, async (req, res) => {
+  try {
+    const { title } = req.query;
+    if (!title) {
+      return res.status(400).json({ message: 'Document title is required' });
+    }
+
+    const lead = await StudyAbroadLead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found' });
+
+    const doc = (lead.uploadedDocuments || []).find((d) => d.title === title);
+    if (!doc?.filePath) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    const filePath = await resolveStoredFileUrl(doc.filePath, 'study-abroad-docs');
+    if (filePath !== doc.filePath) {
+      doc.filePath = filePath;
+      lead.markModified('uploadedDocuments');
+      await lead.save();
+      socketHandler.emitStudyAbroadLeadUpdated(lead);
+    }
+
+    const safeName = (doc.fileName || `${doc.title || 'document'}.pdf`).replace(/[^\w.\-() ]+/g, '_');
+
+    if (isCloudinaryUrl(filePath)) {
+      const { buffer, contentType } = await downloadCloudinaryAsset(filePath);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
+    }
+
+    if (isLocalUploadPath(filePath)) {
+      const absolutePath = resolveLocalPath(filePath);
+      if (!fs.existsSync(absolutePath)) {
+        return res.status(404).json({ message: 'Document file missing on server' });
+      }
+      return res.download(absolutePath, safeName);
+    }
+
+    const remote = await fetch(filePath);
+    if (!remote.ok) {
+      return res.status(502).json({ message: 'Download failed' });
+    }
+    const arrayBuffer = await remote.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    res.setHeader('Content-Type', remote.headers.get('content-type') || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Study abroad document download error:', error);
+    return res.status(500).json({ message: error.message || 'Download failed' });
   }
 });
 

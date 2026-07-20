@@ -101,6 +101,53 @@ const getDocumentDownloadUrl = (secureUrl) => {
   });
 };
 
+/**
+ * Fetch original Cloudinary asset bytes via Admin private download API.
+ * Works even when public PDF/ZIP delivery is blocked (res.cloudinary.com → 401).
+ */
+const downloadCloudinaryAsset = async (secureUrl) => {
+  if (!isConfigured) {
+    throw new Error('Cloudinary is not configured');
+  }
+  if (!isCloudinaryUrl(secureUrl)) {
+    throw new Error('Not a Cloudinary URL');
+  }
+
+  const parsed = parseCloudinaryUrl(secureUrl);
+  if (!parsed) {
+    throw new Error('Could not parse Cloudinary URL');
+  }
+
+  let publicId = parsed.publicId;
+  let format;
+  const extMatch = publicId.match(/\.([a-z0-9]+)$/i);
+  if (extMatch) {
+    format = extMatch[1].toLowerCase();
+    publicId = publicId.replace(/\.[a-z0-9]+$/i, '');
+  } else if (isPdfCloudinaryUrl(secureUrl)) {
+    format = 'pdf';
+  }
+
+  const privateUrl = cloudinary.utils.private_download_url(publicId, format || '', {
+    resource_type: parsed.resourceType,
+    type: 'upload',
+    attachment: true,
+  });
+
+  const response = await fetch(privateUrl);
+  if (!response.ok) {
+    throw new Error(`Cloudinary private download failed (${response.status})`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const contentType =
+    response.headers.get('content-type') ||
+    (format === 'pdf' ? 'application/pdf' : 'application/octet-stream');
+
+  return { buffer, contentType, format };
+};
+
 const checkPdfDeliveryEnabled = async () => {
   if (!isConfigured) {
     return { ok: false, detail: 'Cloudinary not configured' };
@@ -225,6 +272,7 @@ const assertCloudinaryDocumentPaths = (uploadedDocuments = []) => {
 module.exports = {
   uploadToCloudinary,
   deleteFromCloudinary,
+  downloadCloudinaryAsset,
   isConfigured,
   isCloudinaryUrl,
   isLocalUploadPath,

@@ -451,8 +451,17 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
     }
 
     const uploadedPaths = [];
+    const attachments = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
+        // Read bytes before Cloudinary upload deletes the temp file.
+        // Nodemailer must NOT fetch public Cloudinary PDF URLs (account returns 401).
+        const content = fs.readFileSync(file.path);
+        attachments.push({
+          filename: file.originalname,
+          content,
+          contentType: file.mimetype || 'application/pdf',
+        });
         const secureUrl = await storeFileOnCloudinary(file.path, 'booking-docs');
         uploadedPaths.push(secureUrl);
       }
@@ -506,12 +515,6 @@ router.post('/:id/post-meeting', protect, upload.array('documents', 10), async (
         </div>
       </div>
     `;
-
-    const attachments = (req.files || []).map((file, index) => ({
-      filename: file.originalname,
-      path: uploadedPaths[index]
-    }));
-
 
     await sendEmail({
       to: booking.email,
