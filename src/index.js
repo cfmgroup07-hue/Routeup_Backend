@@ -234,6 +234,7 @@ app.use('/api/visa-pathways', require('./routes/visaRoutes'));
 app.use('/api/payment', require('./routes/paymentRoutes'));
 app.use('/api/pr-leads', require('./routes/prLeadRoutes'));
 app.use('/api/study-abroad-leads', require('./routes/studyAbroadLeadRoutes'));
+app.use('/api/university-leads', require('./routes/universityLeadRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 

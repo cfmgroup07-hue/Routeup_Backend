@@ -123,6 +123,27 @@ const emitAustraliaPrLeadDeleted = (leadId) => {
   }
 };
 
+const emitUniversityLeadUpdated = (lead) => {
+  if (io) {
+    io.to('admin_room').emit('university_lead_updated', lead);
+    console.log(`[Socket] emit → university_lead_updated (${lead._id})`);
+  }
+};
+
+const emitNewUniversityLead = (lead) => {
+  if (io) {
+    io.to('admin_room').emit('new_university_lead', lead);
+    console.log(`[Socket] emit → new_university_lead (${lead._id})`);
+  }
+};
+
+const emitUniversityLeadDeleted = (leadId) => {
+  if (io) {
+    io.to('admin_room').emit('university_lead_deleted', leadId);
+    console.log(`[Socket] emit → university_lead_deleted (${leadId})`);
+  }
+};
+
 const emitNewNotification = (notification) => {
   if (io) {
     io.to('admin_room').emit('new_notification', notification);
@@ -146,5 +167,8 @@ module.exports = {
   emitAustraliaPrLeadUpdated,
   emitNewAustraliaPrLead,
   emitAustraliaPrLeadDeleted,
+  emitUniversityLeadUpdated,
+  emitNewUniversityLead,
+  emitUniversityLeadDeleted,
   emitNewNotification,
 };
