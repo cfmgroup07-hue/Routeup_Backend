@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const UniversityLead = require('../models/UniversityLead');
 const Notification = require('../models/Notification');
 const { protect } = require('../middleware/authMiddleware');
@@ -10,6 +11,8 @@ const { sendEmail } = require('../utils/mailer');
 const { logAdminActivity } = require('../utils/activityLogger');
 const socketHandler = require('../socket/socketHandler');
 const { uploadToCloudinary, isCloudinaryUrl } = require('../utils/cloudinary');
+
+const SCHOLARSHIP_SESSION_PRICE = 12000;
 
 const storeFileOnCloudinary = async (filePath, folder) => {
   const secureUrl = await uploadToCloudinary(filePath, folder);
@@ -88,6 +91,10 @@ router.post('/', async (req, res) => {
       budget,
       timeline,
       notes,
+      amount,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
     } = req.body;
 
     if (!name?.trim() || !phone?.trim() || !email?.trim()) {
@@ -109,6 +116,22 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Budget and timeline are required' });
     }
 
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return res.status(400).json({ message: 'Payment details are missing' });
+    }
+
+    const bodyToHash = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(bodyToHash)
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({ message: 'Invalid payment signature. Submission aborted.' });
+    }
+
+    const paidAmount = Number(amount) || SCHOLARSHIP_SESSION_PRICE;
+
     const lead = await UniversityLead.create({
       name: name.trim(),
       phone: phone.trim(),
@@ -123,12 +146,15 @@ router.post('/', async (req, res) => {
       timeline: timeline.trim(),
       notes: (notes || '').trim(),
       source: 'universities-book-session',
+      amount: paidAmount,
+      paymentStatus: 'Paid',
+      paymentId: razorpay_payment_id,
     });
 
     try {
       const notification = await Notification.create({
         title: 'New Scholarship Lead',
-        message: `${lead.name} submitted a scholarship enquiry (${countries.join(', ')}).`,
+        message: `${lead.name} paid Rs.${paidAmount} for a scholarship session (${countries.join(', ')}).`,
         type: 'new_lead',
         link: 'university-leads',
         isRead: false,

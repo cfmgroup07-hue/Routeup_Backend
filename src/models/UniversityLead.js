@@ -15,6 +15,13 @@ const UniversityLeadSchema = new mongoose.Schema(
     timeline: { type: String, default: '', trim: true },
     notes: { type: String, default: '', trim: true },
     source: { type: String, default: 'universities-book-session', trim: true },
+    amount: { type: Number, default: 0 },
+    paymentStatus: {
+      type: String,
+      enum: ['Pending', 'Paid'],
+      default: 'Pending',
+    },
+    paymentId: { type: String, default: '' },
     status: {
       type: String,
       enum: ['New', 'Contacted', 'Converted', 'Closed'],
